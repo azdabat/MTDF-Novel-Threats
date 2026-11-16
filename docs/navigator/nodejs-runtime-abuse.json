@@ -1,0 +1,153 @@
+{
+ "name": "Node.js Runtime Abuse",
+ "versions": {
+  "attack": "16",
+  "navigator": "4.9.1",
+  "layer": "4.5"
+ },
+ "domain": "enterprise-attack",
+ "description": "MTDF coverage for Node.js Runtime Abuse",
+ "techniques": [
+  {
+   "techniqueID": "T1027",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1036.003",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1053.003",
+   "score": 5,
+   "color": "#8b949e",
+   "comment": "\ud83d\udd32 Planned",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1053.005",
+   "score": 5,
+   "color": "#8b949e",
+   "comment": "\ud83d\udd32 Planned",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1059.001",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1059.004",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1059.006",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1059.007",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1071.001",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1102",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1105",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1190",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1195.002",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1204.002",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1218",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1543.003",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1547.001",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  },
+  {
+   "techniqueID": "T1571",
+   "score": 30,
+   "color": "#d29922",
+   "comment": "\ud83e\uddea Awaiting telemetry",
+   "enabled": true
+  }
+ ],
+ "legendItems": [
+  {
+   "label": "\u2705 Validated",
+   "color": "#2ea043"
+  },
+  {
+   "label": "\ud83e\uddea Awaiting telemetry",
+   "color": "#d29922"
+  },
+  {
+   "label": "\u26a0\ufe0f Coverage boundary",
+   "color": "#8b949e"
+  }
+ ],
+ "hideDisabled": false
+}

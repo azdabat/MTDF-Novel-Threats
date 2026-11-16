@@ -1,0 +1,42 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: Node.js File Dropper
+author: Ala Dabat
+architecture: Composite sensor
+tier: cousin
+tactic: command_and_control
+techniques:
+- T1105
+- T1547.001
+minimum_truth: A Node.js runtime writes an executable or script file type, or anything into a Startup folder
+reinforcement: Startup folder, writable target, runtime itself in a writable path, double extension; node_modules,
+  npm cache and build folders score down
+data_sources:
+- DeviceFileEvents
+- DeviceProcessEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 1d
+source_rule: NodeJS_File_Dropper
+deploy:
+  mode: alert
+  defender: Custom detection rule, every 1 hour
+  sentinel: Scheduled analytics rule, every 1 hour over 1 hour
+  alert: true
+  why: Startup-folder writes by node alert alone; writable-path drops pair with the loader
+tests:
+- capture: node_variants_v1
+  variants:
+  - V4
+  catches: mtdf_test.cmd in Startup and a .ps1 in %TEMP%
+  expect:
+    must_fire: true
+    contains_like:
+    - FileName: mtdf_test.cmd
+    - FileName: mtdf-variant-stage.ps1
+- capture: node_benign_v1
+  variants:
+  - B
+  catches: 'nothing: npm writes .cmd shims only inside node_modules and the npm cache'
+  expect:
+    row_count: 0

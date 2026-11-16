@@ -1,0 +1,67 @@
+// ============================================================================
+// COMPOSITE SENSOR (L2): NodeJS_File_Dropper
+// Author       : Ala Dabat | MTDF 2026
+// Platform     : MDE Advanced Hunting / Sentinel — DeviceFileEvents
+// MITRE        : T1105 (Ingress Tool Transfer), T1547.001 (Startup Folder), T1059.007
+// Architecture : Composite sensor (Layer 1) — Cousin Pack, Node.js Runtime Abuse
+//
+// MINIMUM TRUTH
+//   A Node.js runtime (by name or PE metadata) writes an executable or script file type, or
+//   writes anything into a Startup folder. Node stages its next step on disk this way; developer
+//   tooling writes the same types only inside project and package trees.
+//
+// REINFORCEMENT
+//   + into a Startup folder                          (persistence at next logon)
+//   + into a user-writable location                  (staging)
+//   + the node runtime itself runs from a writable path (loader, not dev tooling)
+//   + double extension (invoice.pdf.exe)              (masquerade)
+// NOISE CONTROL
+//   node_modules, the npm cache and global shims, and build output folders score down hard,
+//   never excluded: a payload hidden in node_modules still scores on the other signals.
+// ============================================================================
+
+let lookback   = 3650d;   // LAB: production uses 1d
+let Threshold  = 45;
+let ExecExt    = dynamic([".exe",".dll",".scr",".ps1",".psm1",".bat",".cmd",".vbs",".vbe",".hta",".lnk",".msi",".jse",".wsf",".com"]);
+let WritableRx = @"(?i)\\(appdata\\(local|roaming)|temp|tmp|downloads|users\\public|programdata)\\";
+let DevTrees   = dynamic([@"\node_modules\", @"\npm-cache\", @"\appdata\roaming\npm\", @"\dist\", @"\build\", @"\out\", @"\.next\", @"\.git\"]);
+
+DeviceFileEvents
+| where Timestamp >= ago(lookback)
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where InitiatingProcessFileName in~ ("node.exe", "node")
+     or InitiatingProcessVersionInfoOriginalFileName =~ "node.exe"
+     or InitiatingProcessVersionInfoProductName =~ "Node.js"
+| extend Path = tolower(tostring(FolderPath))
+| extend Ext  = tolower(extract(@"(\.[^.\\]+)$", 1, tostring(FileName)))
+| extend InStartup = iff(Path has @"\start menu\programs\startup\", 1, 0)
+// ---- MINIMUM TRUTH -------------------------------------------------------
+| where Ext in (ExecExt) or InStartup == 1
+// ---- REINFORCEMENT -------------------------------------------------------
+| extend
+    Writable        = iff(Path matches regex WritableRx, 1, 0),
+    RuntimeWritable = iff(tostring(InitiatingProcessFolderPath) matches regex WritableRx, 1, 0),
+    DoubleExt       = iff(FileName matches regex @"(?i)\.(pdf|docx?|xlsx?|jpe?g|png|txt|zip)\.(exe|scr|js|vbs|cmd|bat|lnk|hta)$", 1, 0),
+    DevTree         = iff(Path has_any (DevTrees), 1, 0)
+| extend RiskScore =
+      30                                        // minimum truth
+    + iff(InStartup == 1,       40, 0)
+    + iff(Writable == 1,        15, 0)
+    + iff(RuntimeWritable == 1, 20, 0)
+    + iff(DoubleExt == 1,       20, 0)
+    - iff(DevTree == 1,         30, 0)
+| extend RiskScore = max_of(RiskScore, 0)
+| where RiskScore >= Threshold
+| extend Severity = case(RiskScore >= 90, "CRITICAL", RiskScore >= 65, "HIGH", "MEDIUM")
+| extend HunterDirective = pack_array(
+    strcat("[TRUTH] Node.js runtime wrote ", FileName, " to ", FolderPath),
+    strcat("[EVIDENCE] startup=", tostring(InStartup), " | writable=", tostring(Writable),
+           " | runtime-writable=", tostring(RuntimeWritable), " | double-ext=", tostring(DoubleExt), " | score=", tostring(RiskScore)),
+    "[NEXT] Collect the file (SHA256) and check its prevalence; look for its execution (DeviceProcessEvents on the same path) and for the node script that wrote it.",
+    "[CONTAIN] If unexpected: remove from Startup after collection, isolate, hunt the hash and file name estate-wide."
+  )
+| project Timestamp, DeviceId, ReportId, DeviceName, Severity, RiskScore, FileName, FolderPath, SHA256,
+          Writer = InitiatingProcessFileName, WriterPath = InitiatingProcessFolderPath,
+          WriterCommandLine = InitiatingProcessCommandLine, InStartup, Writable, RuntimeWritable, DoubleExt, DevTree,
+          HunterDirective
+| order by RiskScore desc, Timestamp desc

@@ -1,0 +1,41 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: Node.js Persistence - Autostart Runs a Script
+author: Ala Dabat
+architecture: Composite sensor
+tier: cousin
+tactic: persistence
+techniques:
+- T1547.001
+- T1543.003
+minimum_truth: An autostart value (Run, RunOnce, Winlogon, service ImagePath) is set to launch a JavaScript file
+reinforcement: Script in a writable path, binary not called node, written by node or a script host, hidden launch,
+  service; Program Files scores down
+data_sources:
+- DeviceFileEvents
+- DeviceRegistryEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 1d
+source_rule: NodeJS_Persistence_Autostart
+deploy:
+  mode: alert
+  defender: Custom detection rule, every 1 hour
+  sentinel: Scheduled analytics rule, every 1 hour over 1 hour
+  alert: true
+  why: Very rare in legitimate use; a script in a Run key is worth an alert on its own
+tests:
+- capture: node_variants_v1
+  variants:
+  - V3
+  catches: HKCU Run value MTDFUpdater launching update.exe payload.js
+  expect:
+    must_fire: true
+    contains:
+    - RegistryValueName: MTDFUpdater
+- capture: node_benign_v1
+  variants:
+  - B
+  catches: nothing
+  expect:
+    row_count: 0

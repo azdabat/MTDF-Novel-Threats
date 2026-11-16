@@ -1,0 +1,141 @@
+// ============================================================================
+// ROUTER RULE: NodeJS_ChildProcess_Abuse_Router
+// ============================================================================
+// Architecture : Router Rule (Architecture 2 — Triage Surface)
+// Author       : Ala Dabat | MTDF 2026
+// Platform     : MDE Advanced Hunting — Linux + Windows
+// Lifecycle    : Router (Temporary)
+// MITRE        : T1059.007
+// Base         : 0 · Threshold : >= 30
+//
+// WHY ROUTER RULE: Different child tools have different noise domains.
+//   bash (CI/CD), curl (health checks), python (pipelines) all require
+//   separate suppression models — cannot share a single composite.
+//
+// DECOMPOSITION TRACKER:
+//   Node → bash/sh/dash     | NodeJS_Bash_RCE        | 🔴 Pending
+//   Node → curl/wget/nc     | NodeJS_Downloader_RCE  | 🔴 Pending
+//   Node → python/ruby/perl | NodeJS_Interpreter_RCE | 🔴 Pending
+//   Node → powershell.exe   | NodeJS_PowerShell_RCE  | 🔴 Pending
+//   Node → certutil/mshta   | NodeJS_LOLBin_RCE      | 🔴 Pending
+//
+// FIXES (MTDF-Detection-Tests pipeline, Nov 2026):
+//   [FIX-1] HIGH   IsManagedParent tested InitiatingProcessFileName, which the filter has
+//                  already pinned to node/node.exe - it could never be 1, so the managed-agent
+//                  penalty never applied. Now tests node's own parent
+//                  (InitiatingProcessParentFileName).
+//   [FIX-2] MEDIUM HasWinCradleCmd referenced IsWinCradle inside the extend that defines it.
+//                  Microsoft's Kusto language service rejects that; split into two extends.
+//   [FIX-3] MEDIUM "-enc" via has_any only matches the literal token: PowerShell also accepts
+//                  -e, -ec, -en, -enco ... -encodedcommand. Replaced with a regex.
+//   [FIX-4] HIGH   Windows exec() always wraps the command in "cmd.exe /d /s /c ...", so the
+//                  child is cmd.exe and FileName-based tool groups (certutil, curl, bitsadmin)
+//                  never matched. Tools are now also recognised on the command line.
+//   [FIX-5] HIGH   Tool categories carried no score, so "downloader + URL" (25), "LOLBin + URL"
+//                  (25) and "interpreter + base64" (20) could never reach the threshold and
+//                  their routing directives were unreachable. Each category now scores 10,
+//                  like IsShell; cmd.exe/powershell (the Windows wrapper) gets the same 10 the
+//                  sh wrapper gets on Linux, so encoded PowerShell from node now routes (30).
+//   [FIX-6] MEDIUM One row per device/account/child/route (was per child: on Windows that
+//                  collapsed every attack into the latest cmd.exe row).
+//   [FIX-7] MEDIUM Variant testing: a renamed runtime (update.exe) was invisible; node is now
+//                  also identified by PE metadata. Inline decoders (b64decode, FromBase64String,
+//                  atob, Buffer.from(..., 'base64')) now count as encoded - closes the planned
+//                  "interpreter with inline base64" matrix row.
+//   [FIX-8] LOW    Output carries DeviceId and ReportId, so the rule can be deployed as a Defender
+//                  custom detection (which requires them), not only a Sentinel analytics rule.
+//   [FIX-9] HIGH   Benign-workflow review: node's own -e (evaluate) flag matched the PowerShell
+//                  -e (encoded) pattern, so `npm run build` with "node -e ..." scored 30 and fired.
+//                  -e now counts as encoded only when PowerShell is on the command line.
+//   [PORT]         toint(<bool>) written as iff(<bool>, 1, 0): identical results, and it also
+//                  runs on the local ADX emulator.
+// ============================================================================
+
+let lookback = 3650d;   // LAB: production uses 7d
+
+let ShellGroup     = dynamic(["bash","dash","sh","zsh","busybox","fish"]);
+let DownloadGroup  = dynamic(["curl","wget","nc","ncat","socat"]);
+let InterpreterGrp = dynamic(["python","python2","python3","perl","ruby","lua"]);
+let WindowsCradle  = dynamic(["powershell.exe","pwsh.exe","cmd.exe"]);
+let WindowsLOLBins = dynamic(["certutil.exe","bitsadmin.exe","mshta.exe","wscript.exe"]);
+let ManagedParents = dynamic([
+    "ccmexec.exe","intunemanagementextension.exe","taniumclient.exe"
+]);
+let ReverseShellTokens = dynamic(["/dev/tcp/","exec 5<>","socket.socket("]);
+let PipeToShellTokens  = dynamic(["| bash","| sh","| dash","| zsh","| perl","| python"]);
+let DownloadTokens     = dynamic(["curl","wget","ncat","socat","Invoke-WebRequest","iwr","Start-BitsTransfer"]);   // [FIX-4]
+let LOLBinTokens       = dynamic(["certutil","bitsadmin","mshta","wscript","cscript","regsvr32"]);               // [FIX-4]
+
+DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| where InitiatingProcessFileName in~ ("node", "node.exe")
+     or InitiatingProcessVersionInfoOriginalFileName =~ "node.exe"     // [FIX-7] renamed runtime
+     or InitiatingProcessVersionInfoProductName =~ "Node.js"
+| where FileName in~ (ShellGroup)
+     or FileName in~ (DownloadGroup)
+     or FileName in~ (InterpreterGrp)
+     or FileName in~ (WindowsCradle)
+     or FileName in~ (WindowsLOLBins)
+| extend
+    IsShell       = iff(FileName in~ (ShellGroup), 1, 0),
+    IsDownloader  = iff(FileName in~ (DownloadGroup) or ProcessCommandLine has_any (DownloadTokens), 1, 0),   // [FIX-4]
+    IsInterpreter = iff(FileName in~ (InterpreterGrp), 1, 0),
+    IsWinCradle   = iff(FileName in~ (WindowsCradle), 1, 0),
+    IsWinLOLBin   = iff(FileName in~ (WindowsLOLBins) or ProcessCommandLine has_any (LOLBinTokens), 1, 0),  // [FIX-4]
+    HasReverseShell  = iff(ProcessCommandLine has_any (ReverseShellTokens), 1, 0),
+    HasPipeToShell   = iff(ProcessCommandLine has_any (PipeToShellTokens), 1, 0),
+    HasRemoteURL     = iff(ProcessCommandLine matches regex
+                         @"\b(https?|ftp)://[^\s]+", 1, 0),
+    HasBase64        = iff((ProcessCommandLine has_any ("powershell", "pwsh")                                  // [FIX-9] -e is only
+                            and ProcessCommandLine matches regex @"(?i)\s-e(c|n|nc|nco|ncod|ncode|ncoded|ncodedc|ncodedco|ncodedcom|ncodedcomm|ncodedcomma|ncodedcomman|ncodedcommand)?\s")  // "encoded" for PowerShell
+                           or ProcessCommandLine matches regex @"(?i)base64\s+-d|b64decode|frombase64string|atob\(|base64['""]\s*\)", 1, 0),   // [FIX-3] [FIX-7]
+    IsManagedParent  = iff(InitiatingProcessParentFileName in~ (ManagedParents), 1, 0)          // [FIX-1]
+| extend                                                                                          // [FIX-2]
+    HasWinCradleCmd  = iff(IsWinCradle == 1
+                         and ProcessCommandLine has_any (
+                             "IEX","DownloadString","Invoke-WebRequest"), 1, 0)
+| extend RawScore = 0
+    + iff(HasReverseShell == 1,   40, 0)
+    + iff(HasPipeToShell == 1,    30, 0)
+    + iff(HasRemoteURL == 1,      25, 0)
+    + iff(HasBase64 == 1,         20, 0)
+    + iff(HasWinCradleCmd == 1,   20, 0)
+    + iff(IsShell == 1,           10, 0)
+    + iff(IsWinCradle == 1,       10, 0)   // [FIX-5] Windows wrapper, parity with sh on Linux
+    + iff(IsDownloader == 1,      10, 0)   // [FIX-5]
+    + iff(IsInterpreter == 1,     10, 0)   // [FIX-5]
+    + iff(IsWinLOLBin == 1,       10, 0)   // [FIX-5]
+    - iff(IsManagedParent == 1,   15, 0)
+| extend RiskScore = iif(RawScore < 0, 0, RawScore)
+| where RiskScore >= 30
+| extend RoutingDirective = case(
+    HasReverseShell == 1,
+        strcat("CRITICAL → NodeJS_Bash_RCE composite | Reverse shell on ",
+               DeviceName, " | Composite pending — use NodeJS_SuspiciousChildProcesses"),
+    IsShell == 1 and (HasPipeToShell == 1 or HasBase64 == 1),
+        "HIGH → NodeJS_Bash_RCE composite | Shell with pipe or encoded payload",
+    IsDownloader == 1 and HasRemoteURL == 1,
+        "HIGH → NodeJS_Downloader_RCE composite | Download tool with remote URL",
+    IsInterpreter == 1 and (HasBase64 == 1 or HasRemoteURL == 1),
+        "HIGH → NodeJS_Interpreter_RCE composite | Interpreter with suspicious flags",
+    IsWinCradle == 1 and HasWinCradleCmd == 1,
+        "HIGH → NodeJS_PowerShell_RCE composite | PowerShell cradle from Node",
+    IsWinCradle == 1 and HasBase64 == 1,
+        "HIGH → NodeJS_PowerShell_RCE composite | Encoded PowerShell from Node",
+    IsWinLOLBin == 1 and HasRemoteURL == 1,
+        "MEDIUM → NodeJS_LOLBin_RCE composite | LOLBin with remote URL from Node",
+    "MEDIUM → No dedicated composite | Investigate child process manually"
+)
+// [FIX-6] On Windows every exec() child is cmd.exe, so keying on FileName alone collapsed
+//         different attacks (cradle, certutil, encoded) into one row. Keyed on the route too.
+| summarize arg_max(Timestamp, *) by DeviceId, AccountName, FileName, RoutingDirective
+| project
+    Timestamp, DeviceId, ReportId, DeviceName, AccountName,
+    ParentProcess = InitiatingProcessFileName,
+    ChildProcess  = FileName,
+    ProcessCommandLine,
+    RiskScore,
+    IsShell, IsDownloader, IsInterpreter, IsWinCradle,
+    HasReverseShell, HasPipeToShell, HasRemoteURL, HasBase64,
+    RoutingDirective
+| sort by RiskScore desc

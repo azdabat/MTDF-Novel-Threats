@@ -1,0 +1,6 @@
+datasets/raw/
+__pycache__/
+*.pyc
+*.raw.json
+*.kql.out
+tools/semantic/node_modules/

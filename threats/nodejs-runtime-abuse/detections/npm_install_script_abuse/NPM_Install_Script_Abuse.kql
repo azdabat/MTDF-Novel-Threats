@@ -1,0 +1,80 @@
+// ============================================================================
+// COMPOSITE SENSOR (L2): NPM_Install_Script_Abuse
+// Author       : Ala Dabat | MTDF 2026
+// Platform     : MDE Advanced Hunting / Sentinel — DeviceProcessEvents
+// MITRE        : T1195.002 (Compromise Software Supply Chain), T1059.007, T1105
+// Architecture : Composite sensor (Layer 1) — Cousin Pack, Node.js Runtime Abuse
+//
+// THREAT MODEL
+//   A malicious package runs code at install time through preinstall / install / postinstall.
+//   npm, yarn and pnpm run those lifecycle scripts as a child shell of the package manager's own
+//   node process (cmd.exe /d /s /c "..." on Windows, sh -c on Linux), with the developer's
+//   privileges and network.
+//
+// MINIMUM TRUTH
+//   A package manager's node process (npm-cli.js, npx-cli.js, yarn, pnpm) starts a child whose
+//   command line reaches the network, decodes, or uses a LOLBin.
+//
+// REINFORCEMENT
+//   + remote URL, download tool, pipe to a shell, encoded content, LOLBin
+//   + an install verb (install / i / ci / add) on the package manager
+//   + output written to a user-writable path
+// NOISE CONTROL
+//   Known build helpers (node-gyp, prebuild-install, node-pre-gyp, husky, patch-package,
+//   electron-rebuild) score down, never out.
+// ============================================================================
+
+let lookback   = 3650d;   // LAB: production uses 1d
+let Threshold  = 50;
+let PkgManagerRx = @"(?i)(npm-cli\.js|npx-cli\.js|yarn\.c?js|pnpm\.c?js|\\bun(\.exe)?\b)";
+let InstallRx    = @"(?i)(npm-cli\.js|yarn\.c?js|pnpm\.c?js)""?\s+(install|i|ci|add|update|rebuild)\b";
+let NetTools     = dynamic(["curl","wget","Invoke-WebRequest","iwr","Invoke-RestMethod","irm","DownloadString","DownloadFile","Start-BitsTransfer","nc","ncat"]);
+let LOLBins      = dynamic(["certutil","bitsadmin","mshta","regsvr32","rundll32","wscript","cscript","msiexec"]);
+let BuildHelpers = dynamic(["node-gyp","prebuild-install","node-pre-gyp","husky","patch-package","electron-rebuild","esbuild"]);
+let WritableRx   = @"(?i)(\\(appdata\\(local|roaming)|temp|tmp|downloads|users\\public|programdata)\\|%temp%|%appdata%|/tmp/)";
+
+DeviceProcessEvents
+| where Timestamp >= ago(lookback)
+| where InitiatingProcessFileName in~ ("node.exe", "node", "bun.exe", "bun")
+| where InitiatingProcessCommandLine matches regex PkgManagerRx
+| extend Cmd = tostring(ProcessCommandLine)
+| extend
+    HasUrl     = iff(Cmd matches regex @"(?i)\b(https?|ftp)://\S+", 1, 0),
+    HasNetTool = iff(Cmd has_any (NetTools), 1, 0),
+    HasLOLBin  = iff(Cmd has_any (LOLBins), 1, 0),
+    HasEncoded = iff((Cmd has_any ("powershell", "pwsh") and Cmd matches regex @"(?i)\s-e(c|nc|ncodedcommand)?\s")   // node -e is not encoded
+                     or Cmd matches regex @"(?i)(base64\s+-d|b64decode|frombase64string|atob\()", 1, 0),
+    PipeShell  = iff(Cmd matches regex @"\|\s*(ba|da|z)?sh\b|\|\s*(iex|powershell|pwsh)\b", 1, 0)
+// ---- MINIMUM TRUTH -------------------------------------------------------
+| where HasUrl == 1 or HasNetTool == 1 or HasLOLBin == 1 or HasEncoded == 1
+// ---- REINFORCEMENT -------------------------------------------------------
+| extend
+    InstallVerb  = iff(InitiatingProcessCommandLine matches regex InstallRx, 1, 0),
+    WritesOut    = iff(Cmd matches regex WritableRx, 1, 0),
+    BuildHelper  = iff(Cmd has_any (BuildHelpers), 1, 0)
+| extend RiskScore =
+      20                                        // minimum truth
+    + iff(HasUrl == 1,      20, 0)
+    + iff(HasNetTool == 1,  15, 0)
+    + iff(HasLOLBin == 1,   20, 0)
+    + iff(HasEncoded == 1,  20, 0)
+    + iff(PipeShell == 1,   20, 0)
+    + iff(InstallVerb == 1, 10, 0)
+    + iff(WritesOut == 1,   10, 0)
+    - iff(BuildHelper == 1, 25, 0)
+| extend RiskScore = max_of(RiskScore, 0)
+| where RiskScore >= Threshold
+| extend Severity = case(RiskScore >= 90, "CRITICAL", RiskScore >= 70, "HIGH", "MEDIUM")
+| extend HunterDirective = pack_array(
+    strcat("[TRUTH] Package-manager lifecycle script ran: ", Cmd),
+    strcat("[EVIDENCE] url=", tostring(HasUrl), " | net-tool=", tostring(HasNetTool), " | lolbin=", tostring(HasLOLBin),
+           " | encoded=", tostring(HasEncoded), " | pipe-to-shell=", tostring(PipeShell),
+           " | install=", tostring(InstallVerb), " | score=", tostring(RiskScore)),
+    strcat("[CONTEXT] package manager: ", InitiatingProcessCommandLine),
+    "[NEXT] Identify the package: the project's package-lock.json and the npm cache (_logs) at that time; check the package's scripts block and its publish history.",
+    "[CONTAIN] Treat the developer's tokens (npm, Git, cloud) as exposed; rotate them, remove the package, and hunt the same package name across build agents."
+  )
+| project Timestamp, DeviceId, ReportId, DeviceName, AccountName, Severity, RiskScore, Child = FileName,
+          ProcessCommandLine, PackageManagerCommandLine = InitiatingProcessCommandLine,
+          HasUrl, HasNetTool, HasLOLBin, HasEncoded, PipeShell, InstallVerb, HunterDirective
+| order by RiskScore desc, Timestamp desc

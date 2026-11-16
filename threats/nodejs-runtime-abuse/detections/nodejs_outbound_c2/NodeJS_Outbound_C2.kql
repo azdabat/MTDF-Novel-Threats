@@ -1,0 +1,111 @@
+// ============================================================================
+// COMPOSITE HUNT (L2.5): NodeJS_Outbound_C2
+// Author       : Ala Dabat | MTDF 2026
+// Platform     : MDE Advanced Hunting / Sentinel — DeviceNetworkEvents
+// MITRE        : TA0011 | T1071.001 (Web Protocols), T1102 (Web Service), T1105 (Ingress Tool Transfer)
+// Architecture : Composite sensor (Layer 1), single telemetry domain, no joins
+// Cousin       : C2_HTTPS_Jitter_BeaconShape (timing). This sensor needs no timing: it anchors
+//                on WHO is talking and WHERE FROM, so it also catches low-and-slow polling,
+//                one-shot payload pulls and long-lived sockets that never look like a beacon.
+//
+// THREAT MODEL
+//   Node.js malware talks to its operator directly from node.exe: HTTPS polling, WebSockets,
+//   or reading its C2 address from a public blockchain (smart-contract reads over a public
+//   RPC endpoint — the EtherRAT / EtherHiding pattern), so the C2 address never appears in
+//   the payload. A developer's node.exe talks to package registries and code hosts; a loader's
+//   node.exe talks to everything else.
+//
+// MINIMUM TRUTH
+//   A Node.js runtime opens an outbound connection to a public (non-RFC1918) address.
+//   (Truth alone never alerts: reinforcement must reach the threshold.)
+//
+// REINFORCEMENT
+//   + destination is a public blockchain RPC / explorer endpoint      (blockchain C2 resolution)
+//   + runtime or its script lives in a user-writable path             (loader, not dev tooling)
+//   + direct-to-IP (no hostname)                                       (hard-coded C2)
+//   + non-web port                                                     (raw socket / custom C2)
+//   + repeated contact with the same destination                      (polling)
+//   + node launched by a script host / shell                          (delivery chain)
+//
+// NOISE CONTROL
+//   Package registries / code hosts score DOWN, never out: attackers stage payloads on GitHub
+//   and npm too, so a writable-path runtime talking to raw.githubusercontent.com still fires.
+// ============================================================================
+
+let lookback   = 3650d;   // LAB: production uses 1d
+let Threshold  = 45;
+let WritableRx = @"(?i)\\(appdata\\(local|roaming)|temp|tmp|downloads|users\\public|programdata)\\";
+let BlockchainRpc = dynamic([
+    "infura.io","alchemy.com","alchemyapi.io","quiknode.pro","quicknode.com","ankr.com",
+    "publicnode.com","llamarpc.com","drpc.org","cloudflare-eth.com","etherscan.io","bscscan.com",
+    "bsc-dataseed","binance.org","trongrid.io","tronscan.org","blockcypher.com","mainnet.base.org"]);
+let DevHosts   = dynamic([
+    "registry.npmjs.org","npmjs.com","registry.yarnpkg.com","yarnpkg.com","nodejs.org",
+    "github.com","githubusercontent.com","gitlab.com","bitbucket.org","unpkg.com","jsdelivr.net"]);
+let DeliveryParents = dynamic(["powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe","mshta.exe","explorer.exe"]);
+let WebPorts   = dynamic([80, 443, 8080, 8443]);
+
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where ActionType in ("ConnectionSuccess", "ConnectionAttempt", "ConnectionFailed")
+| where InitiatingProcessFileName in~ ("node.exe", "node")
+     or InitiatingProcessVersionInfoOriginalFileName =~ "node.exe"
+     or InitiatingProcessVersionInfoProductName =~ "Node.js"
+// ---- MINIMUM TRUTH -------------------------------------------------------
+| where isnotempty(RemoteIP) and not(ipv4_is_private(RemoteIP))
+     and RemoteIP !startswith "127." and RemoteIP !in ("::1", "0.0.0.0")
+| extend Url  = tolower(tostring(RemoteUrl))
+| extend Dest = iff(isnotempty(Url), Url, RemoteIP)
+// ---- REINFORCEMENT (per connection) -------------------------------------
+| extend
+    IsBlockchainRpc   = iff(Url has_any (BlockchainRpc), 1, 0),
+    IsDevHost         = iff(Url has_any (DevHosts), 1, 0),
+    DirectToIP        = iff(isempty(Url), 1, 0),
+    NonWebPort        = iff(RemotePort !in (WebPorts), 1, 0),
+    WritableRuntime   = iff(tostring(InitiatingProcessFolderPath) matches regex WritableRx
+                            or tostring(InitiatingProcessCommandLine) matches regex WritableRx, 1, 0),
+    FromDeliveryParent = iff(InitiatingProcessParentFileName in~ (DeliveryParents), 1, 0)
+| summarize
+    Connections        = count(),
+    RemoteIPs          = make_set(RemoteIP, 10),
+    Ports              = make_set(RemotePort, 10),
+    FirstSeen          = min(Timestamp),
+    IsBlockchainRpc    = max(IsBlockchainRpc),
+    IsDevHost          = max(IsDevHost),
+    DirectToIP         = max(DirectToIP),
+    NonWebPort         = max(NonWebPort),
+    WritableRuntime    = max(WritableRuntime),
+    FromDeliveryParent = max(FromDeliveryParent),
+    arg_max(Timestamp, ReportId, DeviceName, InitiatingProcessAccountName, InitiatingProcessFolderPath,
+            InitiatingProcessCommandLine, InitiatingProcessParentFileName)
+  by DeviceId, Dest
+| extend Polling = iff(Connections >= 5, 1, 0)
+| extend RiskScore =
+      10                                             // minimum truth
+    + iff(IsBlockchainRpc == 1,    40, 0)
+    + iff(WritableRuntime == 1,    30, 0)
+    + iff(DirectToIP == 1,         15, 0)
+    + iff(NonWebPort == 1,         15, 0)
+    + iff(Polling == 1,            10, 0)
+    + iff(FromDeliveryParent == 1, 10, 0)
+    - iff(IsDevHost == 1,          20, 0)
+| extend RiskScore = max_of(RiskScore, 0)
+| where RiskScore >= Threshold
+| extend Severity = case(RiskScore >= 80, "CRITICAL", RiskScore >= 60, "HIGH", "MEDIUM")
+| extend HunterDirective = pack_array(
+    strcat("[TRUTH] node.exe outbound to ", Dest, " (", tostring(Connections), " connections, ports ", tostring(Ports), ")"),
+    strcat("[EVIDENCE] blockchain-rpc=", tostring(IsBlockchainRpc), " | writable-runtime=", tostring(WritableRuntime),
+           " | direct-ip=", tostring(DirectToIP), " | non-web-port=", tostring(NonWebPort),
+           " | delivery-parent=", tostring(FromDeliveryParent), " | score=", tostring(RiskScore)),
+    iff(IsBlockchainRpc == 1,
+        "[NEXT] Blockchain RPC from node: likely C2 address resolution (EtherHiding pattern). Recover the script, find the contract address / RPC call in it, then hunt the resolved C2 host across the estate.",
+        "[NEXT] Recover the script node is running (InitiatingProcessCommandLine); check the destination's reputation and first-seen across the estate."),
+    "[NEXT] Pivot to NodeJS_Loader_Execution (how node started) and NodeJS_ChildProcess_Abuse_Router (what it ran) on this device.",
+    "[CONTAIN] If unexpected: isolate, block the destination, hunt the same script path and destination estate-wide."
+  )
+| project Timestamp, DeviceId, ReportId, FirstSeen, DeviceName, Account = InitiatingProcessAccountName, Severity, RiskScore,
+          Dest, RemoteIPs, Ports, Connections, RuntimePath = InitiatingProcessFolderPath,
+          RuntimeCommandLine = InitiatingProcessCommandLine, Parent = InitiatingProcessParentFileName,
+          IsBlockchainRpc, WritableRuntime, DirectToIP, NonWebPort, FromDeliveryParent, IsDevHost,
+          HunterDirective
+| order by RiskScore desc, Timestamp desc

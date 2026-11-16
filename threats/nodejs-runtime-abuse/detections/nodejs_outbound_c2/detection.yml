@@ -1,0 +1,52 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: Node.js Outbound C2
+author: Ala Dabat
+architecture: Composite sensor
+tier: core
+tactic: command_and_control
+techniques:
+- T1071.001
+- T1102
+minimum_truth: A Node.js runtime opens an outbound connection to a public address
+reinforcement: Blockchain RPC destination, runtime in a writable path, direct-to-IP, non-web port, polling, script-host
+  parent; package registries and code hosts score down
+data_sources:
+- DeviceNetworkEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 1d
+source_rule: NodeJS_Outbound_C2
+deploy:
+  mode: alert
+  defender: Custom detection rule, every 1 hour
+  sentinel: Scheduled analytics rule, every 1 hour over 1 day
+  alert: true
+  why: 'Process context plus destination: catches C2 that never looks like a beacon'
+tests:
+- capture: node_lab_v1
+  variants:
+  - V0
+  catches: the %TEMP% runtime polling a public Ethereum RPC endpoint, named from its own DNS query
+  expect:
+    must_fire: true
+    contains_like:
+    - RuntimePath: mtdf-node
+      Dest: publicnode
+    contains:
+    - IsBlockchainRpc: 1
+- capture: node_variants_v1
+  variants:
+  - V2
+  catches: the renamed runtime connecting to port 4444
+  expect:
+    must_fire: true
+    contains_like:
+    - RuntimePath: mtdf-variant
+      Ports: '4444'
+- capture: node_benign_v1
+  variants:
+  - B
+  catches: 'nothing: npm and an app talking to registry.npmjs.org'
+  expect:
+    row_count: 0

@@ -1,0 +1,22 @@
+<!--
+  sysmonconfig-mtdf-lab.xml - lab VM only: log every process, network, file-create, registry and
+  DNS event with no filtering, so an emulation can never be missed because of a config exclusion.
+  Far too noisy for production; exactly right for a VM that exists to be recorded.
+  Install:  Sysmon64.exe -accepteula -i sysmonconfig-mtdf-lab.xml
+  Update:   Sysmon64.exe -c sysmonconfig-mtdf-lab.xml
+-->
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>MD5,SHA1,SHA256,IMPHASH</HashAlgorithms>
+  <CheckRevocation/>
+  <EventFiltering>
+    <RuleGroup name="process" groupRelation="or"><ProcessCreate onmatch="exclude"/></RuleGroup>
+    <RuleGroup name="network" groupRelation="or"><NetworkConnect onmatch="exclude"/></RuleGroup>
+    <RuleGroup name="file" groupRelation="or"><FileCreate onmatch="exclude"/></RuleGroup>
+    <RuleGroup name="registry" groupRelation="or"><RegistryEvent onmatch="exclude"/></RuleGroup>
+    <RuleGroup name="dns" groupRelation="or"><DnsQuery onmatch="exclude"/></RuleGroup>
+    <RuleGroup name="wmi" groupRelation="or"><WmiEvent onmatch="exclude"/></RuleGroup>
+    <RuleGroup name="lsass" groupRelation="or">
+      <ProcessAccess onmatch="include"><TargetImage condition="end with">lsass.exe</TargetImage></ProcessAccess>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

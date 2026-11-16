@@ -1,0 +1,75 @@
+name: threat-tests
+
+# On every push and pull request: format gate -> lint -> Microsoft Kusto compile check ->
+# every detection tested on a throwaway Azure Data Explorer engine (Kustainer) -> threat
+# READMEs, coverage matrices and ATT&CK layers regenerated from the results and committed on main.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: threat-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      kustainer:
+        image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+        ports: ["8080:8080"]
+        env:
+          ACCEPT_EULA: "Y"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - run: pip install -r requirements.txt
+      - name: Format gate (THREAT_FORMAT.md)
+        run: python tools/validate_threats.py
+      - name: Lint (MTDF bug classes)
+        run: python tools/lint_kql.py threats --no-port
+      - name: Compile check (Microsoft Kusto language service)
+        run: |
+          npm install --prefix tools/semantic --no-audit --no-fund
+          python tools/semantic_check.py
+      - name: Wait for Kustainer
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8080/v1/rest/query -H 'Content-Type: application/json' \
+              -d '{"db":"NetDefaultDB","csl":"print ready=1"}' >/dev/null 2>&1 && { echo ready; exit 0; }
+            echo "waiting ($i/60)"; sleep 5
+          done; exit 1
+      - name: Run detection tests
+        id: tests
+        run: python tools/run_tests.py --json docs/results.json
+      - name: Build threat docs
+        if: always() && steps.tests.outcome != 'skipped'
+        run: python tools/build_threat_docs.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: threat-results
+          path: |
+            docs/
+            threats/*/README.md
+            README.md
+          if-no-files-found: ignore
+      - name: Commit generated docs
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.tests.outcome == 'success'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs README.md threats
+          git diff --cached --quiet && { echo "docs unchanged"; exit 0; }
+          git commit -m "docs: coverage from test run ${{ github.run_number }} [skip ci]"
+          git push

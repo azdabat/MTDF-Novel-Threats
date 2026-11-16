@@ -1,0 +1,54 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: Node.js Child Process Abuse - Router
+author: Ala Dabat
+architecture: Router
+tier: core
+tactic: execution
+techniques:
+- T1059.007
+- T1059.001
+- T1105
+minimum_truth: node spawns a shell, interpreter, downloader or LOLBin carrying attack primitives on its command
+  line
+reinforcement: Reverse-shell and pipe-to-shell tokens, remote URLs, encoded commands, download cradles; managed-agent
+  parent scores down
+data_sources:
+- DeviceProcessEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 7d
+source_rule: NodeJS_ChildProcess_Abuse_Router
+deploy:
+  mode: triage
+  defender: Custom detection rule, every 1 hour
+  sentinel: Scheduled analytics rule, every 1 hour over 1 hour, incidents grouped by host
+  alert: true
+  why: Routes each node child to the composite that owns its noise domain; medium-fidelity alerts for a triage queue
+tests:
+- capture: node_lab_v1
+  variants:
+  - V0
+  catches: the IEX cradle and encoded PowerShell launched through cmd.exe (certutil was refused at process creation
+    on the lab VM in this capture - see lab notes)
+  expect:
+    must_fire: true
+    contains_like:
+    - ProcessCommandLine: DownloadString
+    - ProcessCommandLine: dwBoAG8AYQBtAGkA
+- capture: node_variants_v1
+  variants:
+  - V1
+  - V5
+  catches: encoded PowerShell from a renamed runtime; curl from an npm postinstall
+  expect:
+    must_fire: true
+    contains_like:
+    - ParentProcess: update.exe
+    - ProcessCommandLine: 127.0.0.1:9/stage.sh
+- capture: node_benign_v1
+  variants:
+  - B
+  catches: 'nothing: normal developer use of node, npm and npx'
+  expect:
+    row_count: 0

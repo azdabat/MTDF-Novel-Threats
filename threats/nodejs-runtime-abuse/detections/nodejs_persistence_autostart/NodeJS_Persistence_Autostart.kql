@@ -1,0 +1,68 @@
+// ============================================================================
+// COMPOSITE SENSOR (L2): NodeJS_Persistence_Autostart
+// Author       : Ala Dabat | MTDF 2026
+// Platform     : MDE Advanced Hunting / Sentinel — DeviceRegistryEvents
+// MITRE        : T1547.001 (Registry Run Keys), T1543.003 (Windows Service), T1059.007
+// Architecture : Composite sensor (Layer 1) — Cousin Pack, Node.js Runtime Abuse
+//
+// MINIMUM TRUTH
+//   An autostart value (Run / RunOnce / Policies\Explorer\Run / Winlogon / a service ImagePath)
+//   is set to launch a JavaScript file. Whatever binary runs it - node.exe, a renamed copy, or a
+//   bundled runtime - the .js argument is what Node.js persistence cannot avoid writing.
+//
+// REINFORCEMENT
+//   + the script lives in a user-writable path            (dropped payload, not an installed app)
+//   + the binary is not called node                       (renamed runtime)
+//   + written by node itself, or by a script host / reg.exe (the payload persisting itself)
+//   + hidden-window launch arguments
+//   + a service ImagePath (runs as SYSTEM, at boot)
+// NOISE CONTROL
+//   Scripts under Program Files score down (installed Node-based services); never excluded.
+// ============================================================================
+
+let lookback   = 3650d;   // LAB: production uses 1d
+let Threshold  = 50;
+let AutostartRx = @"(?i)\\(currentversion\\(run|runonce|runservices|runservicesonce|policies\\explorer\\run)|winlogon|services\\[^\\]+)$";
+let WritableRx  = @"(?i)\\(appdata\\(local|roaming)|temp|tmp|downloads|users\\public|programdata)\\";
+let Writers     = dynamic(["reg.exe","powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe","mshta.exe","rundll32.exe"]);
+
+DeviceRegistryEvents
+| where Timestamp >= ago(lookback)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey matches regex AutostartRx
+| extend Data = tostring(RegistryValueData)
+// ---- MINIMUM TRUTH -------------------------------------------------------
+| where Data matches regex @"(?i)\.(c|m)?js\b"
+// ---- REINFORCEMENT -------------------------------------------------------
+| extend
+    ScriptWritable = iff(Data matches regex WritableRx, 1, 0),
+    NodeNamed      = iff(Data matches regex @"(?i)\bnode(\.exe)?\b", 1, 0),
+    WrittenByNode  = iff(InitiatingProcessFileName in~ ("node.exe", "node")
+                         or InitiatingProcessVersionInfoOriginalFileName =~ "node.exe", 1, 0),
+    WrittenByHost  = iff(InitiatingProcessFileName in~ (Writers), 1, 0),
+    HiddenStart    = iff(Data has_any ("-WindowStyle Hidden", "-w hidden", "/min", "start /b", "wscript"), 1, 0),
+    ServiceKey     = iff(RegistryKey has @"\Services\" and RegistryValueName =~ "ImagePath", 1, 0),
+    InstalledApp   = iff(Data has @"\program files", 1, 0)
+| extend RiskScore =
+      40                                          // minimum truth
+    + iff(ScriptWritable == 1, 20, 0)
+    + iff(NodeNamed == 0,      15, 0)             // a binary not called node runs a .js
+    + iff(WrittenByNode == 1,  20, 0)
+    + iff(WrittenByHost == 1,  10, 0)
+    + iff(HiddenStart == 1,    10, 0)
+    + iff(ServiceKey == 1,     10, 0)
+    - iff(InstalledApp == 1,   25, 0)
+| extend RiskScore = max_of(RiskScore, 0)
+| where RiskScore >= Threshold
+| extend Severity = case(RiskScore >= 90, "CRITICAL", RiskScore >= 70, "HIGH", "MEDIUM")
+| extend HunterDirective = pack_array(
+    strcat("[TRUTH] Autostart value launches a JavaScript file: ", RegistryKey, "\\", RegistryValueName, " = ", Data),
+    strcat("[EVIDENCE] writable-script=", tostring(ScriptWritable), " | renamed-runtime=", tostring(1 - NodeNamed),
+           " | written-by=", InitiatingProcessFileName, " | service=", tostring(ServiceKey), " | score=", tostring(RiskScore)),
+    "[NEXT] Collect the script and the binary named in the value; find what dropped them (DeviceFileEvents) and how the writer started (NodeJS_Loader_Execution).",
+    "[CONTAIN] Remove the value only after collection; hunt the same value name and script path across the estate."
+  )
+| project Timestamp, DeviceId, ReportId, DeviceName, Severity, RiskScore, RegistryKey, RegistryValueName,
+          RegistryValueData = Data, Writer = InitiatingProcessFileName, WriterCommandLine = InitiatingProcessCommandLine,
+          ScriptWritable, NodeNamed, WrittenByNode, ServiceKey, HunterDirective
+| order by RiskScore desc, Timestamp desc

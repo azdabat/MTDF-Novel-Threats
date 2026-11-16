@@ -1,0 +1,41 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: npm Install-Script Abuse
+author: Ala Dabat
+architecture: Composite sensor
+tier: cousin
+tactic: initial_access
+techniques:
+- T1195.002
+- T1059.007
+minimum_truth: A package manager's node process starts a child whose command line reaches the network, decodes,
+  or uses a LOLBin
+reinforcement: URL, download tool, pipe to shell, encoded content, LOLBin, install verb, writable output; build
+  helpers score down
+data_sources:
+- DeviceProcessEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 1d
+source_rule: NPM_Install_Script_Abuse
+deploy:
+  mode: alert
+  defender: Custom detection rule, every 1 hour (developer workstations and build agents)
+  sentinel: Scheduled analytics rule, every 1 hour over 1 hour
+  alert: true
+  why: Supply-chain execution on the machines that hold source code and publishing tokens
+tests:
+- capture: node_variants_v1
+  variants:
+  - V5
+  catches: a postinstall script running curl during npm install
+  expect:
+    must_fire: true
+    contains_like:
+    - ProcessCommandLine: 127.0.0.1:9/stage.sh
+- capture: node_benign_v1
+  variants:
+  - B
+  catches: 'nothing: npm install of a clean package and npm run build'
+  expect:
+    row_count: 0

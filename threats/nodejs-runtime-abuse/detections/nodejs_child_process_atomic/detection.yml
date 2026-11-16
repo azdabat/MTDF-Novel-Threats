@@ -1,0 +1,41 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: Node.js Child Process - Primitive Collector
+author: Ala Dabat
+architecture: Primitive collector
+tier: core
+tactic: execution
+techniques:
+- T1059.007
+minimum_truth: 'Node.js spawned a child process (zero inference: no claim of intent or malice)'
+reinforcement: None by design - a silent 30-day index that the router and composites read
+data_sources:
+- DeviceProcessEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 30d
+source_rule: NodeJS_ChildProcess_Atomic
+deploy:
+  mode: index
+  defender: Hunting query saved as a function; not a detection
+  sentinel: Summary rule into a custom table, daily, 30-day retention
+  alert: false
+  why: 'Zero-inference index: every node child, kept so routers, composites and hunts can look back 30 days'
+tests:
+- capture: node_lab_v1
+  variants:
+  - V0
+  catches: every child of the lab node runtime
+  expect:
+    must_fire: true
+    contains_like:
+    - ChildCmdLine: whoami
+    - ChildCmdLine: DownloadString
+- capture: node_variants_v1
+  variants:
+  - V1
+  catches: children of a renamed runtime (update.exe)
+  expect:
+    must_fire: true
+    contains_like:
+    - ParentProcess: update.exe

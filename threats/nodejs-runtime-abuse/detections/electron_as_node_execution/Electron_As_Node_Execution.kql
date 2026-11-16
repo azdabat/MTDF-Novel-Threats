@@ -1,0 +1,71 @@
+// ============================================================================
+// COMPOSITE SENSOR (L2): Electron_As_Node_Execution
+// Author       : Ala Dabat | MTDF 2026
+// Platform     : MDE Advanced Hunting / Sentinel — DeviceProcessEvents
+// MITRE        : T1218 (System Binary Proxy Execution), T1059.007
+// Architecture : Composite sensor (Layer 1) — Cousin Pack, Node.js Runtime Abuse
+//
+// THREAT MODEL
+//   Electron apps (VS Code, Slack, Discord, Teams classic, Obsidian ...) embed node. With the
+//   ELECTRON_RUN_AS_NODE environment variable set, the signed app binary runs a JavaScript file
+//   as plain node. Defender does not record environment variables, so the switch itself is a
+//   coverage boundary - but the LAUNCH is not: the app binary is started with a .js file as its
+//   argument, which its own helper processes never do (they carry --type=...).
+//
+// MINIMUM TRUTH
+//   An Electron app binary is launched with a JavaScript file argument that is not part of the
+//   app's own resources.
+//
+// REINFORCEMENT
+//   + the script is in a user-writable path
+//   + launched by a script host / shell / LOLBin
+//   + the binary runs from outside its normal install folder (copied app, or a renamed runtime)
+// NOISE CONTROL
+//   The app's own CLI shims (resources\app\...js, e.g. `code .` from a terminal) are excluded:
+//   they are the vendor's documented use of ELECTRON_RUN_AS_NODE.
+// ============================================================================
+
+let lookback   = 3650d;   // LAB: production uses 1d
+let Threshold  = 50;
+let ElectronApps = dynamic(["code.exe","code - insiders.exe","cursor.exe","windsurf.exe","slack.exe","discord.exe",
+                            "teams.exe","obsidian.exe","notion.exe","figma.exe","signal.exe","whatsapp.exe",
+                            "postman.exe","githubdesktop.exe","mattermost.exe","1password.exe","bitwarden.exe",
+                            "spotify.exe","skype.exe","zoomworkplace.exe"]);
+let WritableRx = @"(?i)\\(appdata\\(local|roaming)|temp|tmp|downloads|users\\public|programdata)\\";
+let Launchers  = dynamic(["powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe","mshta.exe","rundll32.exe","explorer.exe"]);
+
+DeviceProcessEvents
+| where Timestamp >= ago(lookback)
+| where FileName in~ (ElectronApps)
+| where ProcessCommandLine !has "--type="                        // Electron's own helper processes
+| extend ScriptPath = extract(@"(?i)([a-z]:\\[^""]*?\.(c|m)?js)\b", 1, tostring(ProcessCommandLine))
+// ---- MINIMUM TRUTH -------------------------------------------------------
+| where isnotempty(ScriptPath)
+| where ScriptPath !has @"\resources\app"                       // vendor CLI shims (code ., slack --x)
+// ---- REINFORCEMENT -------------------------------------------------------
+| extend
+    ScriptWritable  = iff(ScriptPath matches regex WritableRx, 1, 0),
+    FromLauncher    = iff(InitiatingProcessFileName in~ (Launchers), 1, 0),
+    OutsideInstall  = iff(not(tostring(FolderPath) has_any (@"\program files", @"\appdata\local\programs\", @"\appdata\local\discord\",
+                                                           @"\appdata\local\slack\", @"\windowsapps\")), 1, 0),
+    NodeInDisguise  = iff(ProcessVersionInfoOriginalFileName =~ "node.exe", 1, 0)
+| extend RiskScore =
+      40                                         // minimum truth
+    + iff(ScriptWritable == 1, 25, 0)
+    + iff(FromLauncher == 1,   15, 0)
+    + iff(OutsideInstall == 1, 15, 0)
+    + iff(NodeInDisguise == 1, 15, 0)
+| where RiskScore >= Threshold
+| extend Severity = case(RiskScore >= 90, "CRITICAL", RiskScore >= 70, "HIGH", "MEDIUM")
+| extend HunterDirective = pack_array(
+    strcat("[TRUTH] Electron app launched as node with a script: ", FileName, " ", ScriptPath),
+    strcat("[EVIDENCE] writable-script=", tostring(ScriptWritable), " | launcher=", InitiatingProcessFileName,
+           " | outside-install=", tostring(OutsideInstall), " | node-in-disguise=", tostring(NodeInDisguise),
+           " | score=", tostring(RiskScore)),
+    "[NEXT] Collect the script; check the launcher's command line for ELECTRON_RUN_AS_NODE being set (set / $env: / a .bat wrapper); pivot to the app's children and network.",
+    "[CONTAIN] If unexpected: isolate, collect the script, hunt the script name and launcher estate-wide."
+  )
+| project Timestamp, DeviceId, ReportId, DeviceName, AccountName, Severity, RiskScore, App = FileName, AppPath = FolderPath,
+          ScriptPath, ProcessCommandLine, Launcher = InitiatingProcessFileName, LauncherCommandLine = InitiatingProcessCommandLine,
+          ScriptWritable, FromLauncher, OutsideInstall, NodeInDisguise, HunterDirective
+| order by RiskScore desc, Timestamp desc

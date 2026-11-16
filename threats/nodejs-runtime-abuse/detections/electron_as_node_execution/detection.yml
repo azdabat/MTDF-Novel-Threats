@@ -1,0 +1,42 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: Electron App Run as Node
+author: Ala Dabat
+architecture: Composite sensor
+tier: cousin
+tactic: defense_evasion
+techniques:
+- T1218
+- T1059.007
+minimum_truth: An Electron app binary is launched with a JavaScript file argument that is not part of the app's
+  own resources
+reinforcement: Script in a writable path, script-host or shell launcher, binary outside its install folder, node.exe
+  PE metadata
+data_sources:
+- DeviceProcessEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 1d
+source_rule: Electron_As_Node_Execution
+deploy:
+  mode: alert
+  defender: Custom detection rule, every 1 hour
+  sentinel: Scheduled analytics rule, every 1 hour over 1 hour
+  alert: true
+  why: 'Turns most of the ELECTRON_RUN_AS_NODE boundary into a detection: the launch shape is visible even though
+    the variable is not'
+tests:
+- capture: node_variants_v1
+  variants:
+  - V6
+  catches: Code.exe (node stand-in) launched with main.js from %TEMP%
+  expect:
+    must_fire: true
+    contains_like:
+    - ScriptPath: mtdf-electron
+- capture: node_benign_v1
+  variants:
+  - B
+  catches: nothing
+  expect:
+    row_count: 0

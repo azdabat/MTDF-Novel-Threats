@@ -1,0 +1,22 @@
+# Threat metadata and attack-surface matrix - see THREAT_FORMAT.md
+name: ""                  # e.g. SilverFox / ValleyRAT BYOVD
+slug: ""                  # folder name, e.g. silverfox-byovd
+type: tradecraft          # tradecraft | malware | campaign | zero-day
+status: emerging          # emerging | active | historical
+first_seen: ""
+platforms: [Windows]
+cves: []                  # required for zero-day (write "none assigned" until there is one)
+summary: >
+  Two to four sentences: what it is, who uses it, why it matters now.
+threat_model: >
+  Why the minimum truths below hold whatever the exploit or tool: the behaviour-first argument.
+attack_surface:           # one row per way the threat operates; exactly one of detections / boundary / planned
+  - stage: ""             # kill-chain stage, e.g. Initial access, Defense evasion, Command and control
+    vector: ""            # the concrete way it happens
+    techniques: []        # ATT&CK IDs, e.g. [T1068]
+    minimum_truth: ""     # the one observable this vector cannot avoid
+    detections: []        # folder names under detections/
+    # boundary: "why no endpoint telemetry can see this"
+    # planned: "RuleName - what it will anchor on"
+    # cousins: [{name: "...", url: "https://..."}]
+references: []            # - {title: "...", url: "https://..."}

@@ -1,0 +1,34 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: HTTPS Beacon Shape - Repetition and Controlled Jitter
+author: Ala Dabat
+architecture: Composite (L3)
+tier: core
+tactic: command_and_control
+techniques:
+- T1071.001
+- T1573
+minimum_truth: A non-browser process connects to the same destination at a regular interval
+reinforcement: Beacon-typical interval, controlled jitter, direct-to-IP, heavy repetition; browsers and cloud agents
+  score down
+data_sources:
+- DeviceNetworkEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 24h
+source_rule: C2_HTTPS_Jitter_BeaconShape_LowCPU_v1_1
+deploy:
+  mode: alert
+  defender: Custom detection rule, every 3 hours
+  sentinel: Scheduled analytics rule, every 1 hour over 24 hours
+  alert: true
+  why: Generic timing composite for any process; deploy estate-wide, not only for node
+tests:
+- capture: node_lab_v1
+  variants:
+  - V0
+  catches: node polling one HTTPS destination 25 times with 25% jitter
+  expect:
+    must_fire: true
+    contains_like:
+    - Proc: node.exe

@@ -1,0 +1,89 @@
+// ============================================================================
+// COMPOSITE HUNT (L3): C2_HTTPS_Jitter_BeaconShape_LowCPU_v1_1
+// Author: Ala Dabat
+// MITRE: TA0011 Command and Control | T1071.001 (Web Protocols), T1573 (Encrypted Channel)
+//
+// MINIMUM TRUTH: a non-browser process connects out to the SAME destination at a
+//                regular interval (beacon shape: repetition + controlled jitter).
+// REINFORCEMENT: direct-to-IP (no URL), beacon-typical interval, heavy repetition.
+// NOISE CONTROL: browsers / cloud agents soft-suppressed (score penalty, never excluded).
+//
+// FIXES APPLIED (v1.0):
+// [FIX-1] HIGH   — DeviceName moved out of the per-entity key (device rename split counts).
+// [FIX-2] MEDIUM — IntervalCount vs ConnectionCount separated.
+// [FIX-3] LOW    — BeaconScore floored at 0.
+// FIXES APPLIED (v1.1, MTDF-Detection-Tests pipeline, Nov 2026):
+// [FIX-4] CRITICAL — SentBytes / ReceivedBytes do not exist in DeviceNetworkEvents (Defender
+//                    has no byte counts). The rule failed to compile. Payload-size scoring is
+//                    replaced by a direct-to-IP signal, which Defender can see.
+// [FIX-5] CRITICAL — partition accepts ONE column; "partition by DeviceId, RemoteIP, Proc" was a
+//                    syntax error. Replaced by a sorted, serialized prev() guarded on the
+//                    entity key, so intervals never bleed across entities.
+// [FIX-6] MEDIUM   — The beacon key was RemoteIP only. C2 behind a CDN or a rotating RPC
+//                    provider spreads across IPs and each IP falls under min_connections.
+//                    The key is now the URL when Defender has one, else the IP.
+// [FIX-7] LOW      — Only outbound connection events are used (inbound/listening excluded).
+// [FIX-8] LOW      — SampleCommand / SampleParent now come from the same row (W04).
+// ============================================================================
+
+let lookback          = 3650d;   // LAB: production uses 24h
+let min_connections   = 20;
+let BeaconPorts       = dynamic([443, 8443, 80]);
+
+let BrowserLike       = dynamic(["chrome.exe","msedge.exe","firefox.exe","brave.exe","opera.exe","iexplore.exe"]);
+let CommonCloudAgents = dynamic(["teams.exe","ms-teams.exe","onedrive.exe","msedgewebview2.exe","outlook.exe","olk.exe"]);
+
+DeviceNetworkEvents
+| where Timestamp >= ago(lookback)
+| where ActionType in ("ConnectionSuccess", "ConnectionAttempt", "ConnectionFailed")   // [FIX-7]
+| where RemotePort in (BeaconPorts)
+| where isnotempty(RemoteIP) and not(ipv4_is_private(RemoteIP)) and RemoteIP !startswith "127."
+| extend Proc = tolower(InitiatingProcessFileName)
+| extend Dest = tolower(iff(isnotempty(RemoteUrl), RemoteUrl, RemoteIP))               // [FIX-6]
+| extend EntityKey = strcat(DeviceId, "|", Proc, "|", Dest)
+| sort by EntityKey asc, Timestamp asc                                                 // [FIX-5]
+| extend PrevKey = prev(EntityKey), PrevTime = prev(Timestamp)
+| extend IntervalSec = iff(PrevKey == EntityKey, datetime_diff("second", Timestamp, PrevTime), long(null))
+| where isnotnull(IntervalSec) and IntervalSec between (5 .. 21600)                     // 5 s - 6 h sanity bounds
+| summarize
+    IntervalCount     = count(),
+    AvgIntervalSec    = avg(IntervalSec),
+    MinIntervalSec    = min(IntervalSec),
+    MaxIntervalSec    = max(IntervalSec),
+    StdDevIntervalSec = stdev(IntervalSec),
+    RemoteIPs         = make_set(RemoteIP, 10),
+    DirectToIP        = iff(countif(isempty(RemoteUrl)) == count(), 1, 0),
+    FirstSeen         = min(Timestamp),
+    arg_max(Timestamp, ReportId, DeviceName, InitiatingProcessCommandLine, InitiatingProcessParentFileName)   // [FIX-8] one row
+  by DeviceId, Proc, Dest
+| extend ConnectionCount = IntervalCount + 1
+| where IntervalCount >= min_connections
+| extend JitterRatio = iff(AvgIntervalSec > 0 and isnotnull(StdDevIntervalSec), StdDevIntervalSec / AvgIntervalSec, 0.0)
+| extend
+    IsBrowserLike = iff(Proc in (BrowserLike), 1, 0),
+    IsCommonCloud = iff(Proc in (CommonCloudAgents), 1, 0)
+| extend BeaconScore =
+      iff(AvgIntervalSec between (10 .. 3600), 20, 0)     // typical beacon window
+    + iff(JitterRatio between (0.02 .. 0.50), 20, 0)      // controlled jitter
+    + iff(DirectToIP == 1, 10, 0)                         // [FIX-4] no hostname: direct-to-IP
+    + iff(ConnectionCount >= 40, 10, 0)                   // stronger repetition
+    - iff(IsBrowserLike == 1, 15, 0)                      // soft suppression
+    - iff(IsCommonCloud == 1, 10, 0)
+| extend BeaconScore = max_of(BeaconScore, 0)
+| extend Severity = case(BeaconScore >= 45, "HIGH", BeaconScore >= 30, "MEDIUM", BeaconScore >= 20, "LOW", "INFO")
+| where Severity != "INFO"
+| extend LastSeen = Timestamp
+| project-rename SampleCommand = InitiatingProcessCommandLine, SampleParent = InitiatingProcessParentFileName
+| extend HuntingDirectives = pack_array(
+    strcat("[SUMMARY] Host=", DeviceName, " | Dest=", Dest, " | Proc=", Proc, " | IPs=", tostring(RemoteIPs)),
+    strcat("[SCORE] ", tostring(BeaconScore), " | Sev=", Severity, " | Intervals=", tostring(IntervalCount),
+           " | AvgInt=", tostring(round(AvgIntervalSec, 1)), "s | JitterCV=", tostring(round(JitterRatio, 3)),
+           " | DirectToIP=", tostring(DirectToIP)),
+    strcat("[EVIDENCE] First=", tostring(FirstSeen), " | Last=", tostring(LastSeen), " | Parent=", SampleParent),
+    "[NEXT] Pivot: same Dest across the estate; process tree of Proc; persistence (tasks / run keys / services) and script / LOLBin execution on this host.",
+    "[CONTAIN] If unauthorised: isolate host, acquire triage, block destination, hunt sibling beacons and credential theft."
+  )
+| project Timestamp, DeviceId, ReportId, Severity, BeaconScore, DeviceName, Dest, RemoteIPs, Proc, IntervalCount, ConnectionCount,
+          AvgIntervalSec, StdDevIntervalSec, JitterRatio, DirectToIP, SampleParent, SampleCommand,
+          FirstSeen, LastSeen, HuntingDirectives
+| order by BeaconScore desc, ConnectionCount desc, LastSeen desc

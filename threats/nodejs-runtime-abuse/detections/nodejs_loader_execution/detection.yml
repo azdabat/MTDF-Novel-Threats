@@ -1,0 +1,51 @@
+# Detection metadata - source of truth for the threat README and the tests.
+title: Node.js Loader Execution
+author: Ala Dabat
+architecture: Composite sensor
+tier: core
+tactic: execution
+techniques:
+- T1059.007
+- T1218
+minimum_truth: A Node.js runtime (by name or PE metadata) runs from, or runs a script from, a user-writable location
+reinforcement: Script-host / shell parent, inline code, runtime itself in a writable path, renamed runtime, first
+  node on the device; dev parents and npm shims score down
+data_sources:
+- DeviceFileEvents
+- DeviceProcessEvents
+platforms:
+- Microsoft Defender XDR Advanced Hunting
+- Microsoft Sentinel (MDE connector)
+production_lookback: 1d
+source_rule: NodeJS_Loader_Execution
+deploy:
+  mode: alert
+  defender: Custom detection rule, every 1 hour
+  sentinel: Scheduled analytics rule, every 1 hour over 1 day (30-day baseline)
+  alert: true
+  why: 'High-fidelity: node from a writable path is rare on any device that is not a developer workstation'
+tests:
+- capture: node_lab_v1
+  variants:
+  - V0
+  catches: a copied node.exe in %TEMP%\mtdf-node running update.js
+  expect:
+    must_fire: true
+    contains_like:
+    - RuntimePath: mtdf-node
+- capture: node_variants_v1
+  variants:
+  - V1
+  - V6
+  catches: the renamed runtime in Downloads; the Electron stand-in in %TEMP%
+  expect:
+    must_fire: true
+    contains_like:
+    - Runtime: update.exe
+    - RuntimePath: mtdf-electron
+- capture: node_benign_v1
+  variants:
+  - B
+  catches: 'nothing: npx runs from the npm cache, which scores down'
+  expect:
+    row_count: 0

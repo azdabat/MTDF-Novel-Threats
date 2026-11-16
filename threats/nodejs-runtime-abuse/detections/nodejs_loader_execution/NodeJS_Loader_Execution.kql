@@ -1,0 +1,106 @@
+// ============================================================================
+// COMPOSITE HUNT (L2.5): NodeJS_Loader_Execution
+// Author       : Ala Dabat | MTDF 2026
+// Platform     : MDE Advanced Hunting / Sentinel — DeviceProcessEvents (Windows)
+// MITRE        : T1059.007 (JavaScript), T1218 (System Binary Proxy Execution — trusted runtime)
+// Architecture : Composite sensor (Layer 1), single telemetry domain, no joins
+//
+// THREAT MODEL
+//   Malware delivered as JavaScript and run by a legitimate Node.js runtime: the attacker
+//   drops (or downloads) node.exe plus a .js payload into a user-writable folder and launches
+//   it from a script host, shell or LNK. node.exe is signed and trusted, so the payload never
+//   needs its own executable. The same runtime is how most dev tooling runs, so the anchor
+//   must be WHERE it runs from, not THAT it runs.
+//
+// MINIMUM TRUTH
+//   A Node.js runtime starts AND either the runtime binary or the script it runs lives in a
+//   user-writable location (AppData, Temp, Downloads, Public, ProgramData).
+//   Node is identified by its PE metadata as well as its name, so a renamed node.exe is
+//   still caught.
+//
+// REINFORCEMENT (confidence, never the definition)
+//   + launched by a script host / shell / LOLBin           (delivery chain)
+//   + inline code (-e / --eval / -p)                        (no file on disk)
+//   + the runtime binary itself is in a writable path       (portable node dropped)
+//   + renamed runtime (name is not node.exe)                (masquerade)
+//   + node not seen on this device in the baseline          (new runtime on the host)
+//
+// FIXES
+//   [FIX-1] Benign-workflow review: npx runs packages from %LocalAppData%\npm-cache\_npx, a writable
+//           path, which met the minimum truth. Scored down with the npm shims, never excluded.
+//
+// NOISE CONTROL
+//   Global npm tool shims and the npx cache (AppData\Roaming\npm\node_modules) are a normal developer pattern:
+//   scored down, never excluded, because attackers can hide there too.
+// ============================================================================
+
+let lookback      = 3650d;   // LAB: production uses 1d
+let BaselineStart = 3650d;           // baseline ends where detection starts (bug class 1)   // LAB: production uses 30d
+let Threshold     = 50;
+
+let WritableRx    = @"(?i)\\(appdata\\(local|roaming)|temp|tmp|downloads|users\\public|programdata)\\";
+let NpmShimRx     = @"(?i)\\appdata\\(roaming\\npm\\node_modules|local\\npm-cache)\\";   // [FIX-1] npx cache too
+let DeliveryParents = dynamic(["powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe","mshta.exe",
+                               "rundll32.exe","regsvr32.exe","explorer.exe","msiexec.exe","conhost.exe"]);
+let DevParents    = dynamic(["code.exe","devenv.exe","idea64.exe","webstorm64.exe","rider64.exe",
+                             "windowsterminal.exe","node.exe","npm.exe","git.exe","bash.exe"]);
+
+let NodeRuns =
+DeviceProcessEvents
+| where Timestamp >= ago(BaselineStart)
+| where FileName in~ ("node.exe", "node")
+     or ProcessVersionInfoOriginalFileName =~ "node.exe"
+     or ProcessVersionInfoProductName =~ "Node.js";
+
+let KnownNodeDevices =
+NodeRuns
+| where Timestamp < ago(lookback)
+| distinct DeviceId;
+
+NodeRuns
+| where Timestamp >= ago(lookback)
+| extend Cmd        = tostring(ProcessCommandLine)
+| extend ScriptPath = extract(@"(?i)([a-z]:\\[^""]*?\.(c|m)?js)\b", 1, Cmd)
+| extend
+    RuntimeWritable = iff(tostring(FolderPath) matches regex WritableRx, 1, 0),
+    ScriptWritable  = iff(ScriptPath matches regex WritableRx, 1, 0)
+// ---- MINIMUM TRUTH -------------------------------------------------------
+| where RuntimeWritable == 1 or ScriptWritable == 1
+// ---- REINFORCEMENT -------------------------------------------------------
+| extend ParentL = tolower(InitiatingProcessFileName)
+| extend
+    FromDeliveryParent = iff(ParentL in (DeliveryParents), 1, 0),
+    FromDevParent      = iff(ParentL in (DevParents), 1, 0),
+    InlineCode         = iff(Cmd matches regex @"(?i)\s(-e|--eval|-p|--print)\s", 1, 0),
+    Renamed            = iff(FileName !in~ ("node.exe", "node"), 1, 0),
+    NpmShim            = iff(ScriptPath matches regex NpmShimRx or tostring(FolderPath) matches regex NpmShimRx, 1, 0)
+| join kind=leftouter (KnownNodeDevices | extend NodeKnown = 1) on DeviceId
+| extend NewRuntimeOnDevice = iff(isnull(NodeKnown), 1, 0)
+| extend RiskScore =
+      30                                              // minimum truth
+    + iff(FromDeliveryParent == 1, 20, 0)
+    + iff(InlineCode == 1,         15, 0)
+    + iff(RuntimeWritable == 1,    15, 0)
+    + iff(Renamed == 1,            20, 0)
+    + iff(NewRuntimeOnDevice == 1, 15, 0)
+    - iff(FromDevParent == 1,      20, 0)
+    - iff(NpmShim == 1,            25, 0)
+| extend RiskScore = max_of(RiskScore, 0)
+| where RiskScore >= Threshold
+| extend Severity = case(RiskScore >= 90, "CRITICAL", RiskScore >= 70, "HIGH", "MEDIUM")
+| extend HunterDirective = pack_array(
+    strcat("[TRUTH] Node.js runtime executing from a user-writable location: runtime=", FolderPath,
+           iff(isnotempty(ScriptPath), strcat(" | script=", ScriptPath), "")),
+    strcat("[EVIDENCE] parent=", InitiatingProcessFileName, " | inline=", tostring(InlineCode),
+           " | renamed=", tostring(Renamed), " | new-on-device=", tostring(NewRuntimeOnDevice),
+           " | score=", tostring(RiskScore)),
+    "[NEXT] Collect the .js payload and the runtime folder; check what dropped them (DeviceFileEvents on the same folder) and how the parent was launched (LNK, ClickFix-style paste, mail attachment).",
+    "[NEXT] Pivot to NodeJS_Outbound_C2 and NodeJS_ChildProcess_Abuse_Router on this device; check Run keys / scheduled tasks pointing at the same script (persistence).",
+    "[CONTAIN] If unexpected: isolate the host, block the script hash, hunt the same script name and runtime path across the estate."
+  )
+| project Timestamp, DeviceId, ReportId, DeviceName, AccountName, Severity, RiskScore,
+          Runtime = FileName, RuntimePath = FolderPath, ScriptPath, ProcessCommandLine,
+          Parent = InitiatingProcessFileName, ParentCommandLine = InitiatingProcessCommandLine,
+          SHA256, FromDeliveryParent, InlineCode, RuntimeWritable, Renamed, NewRuntimeOnDevice, NpmShim,
+          HunterDirective
+| order by RiskScore desc, Timestamp desc

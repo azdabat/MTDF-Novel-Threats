@@ -1,0 +1,215 @@
+# Threat metadata, attack-surface matrix and variant catalogue - see THREAT_FORMAT.md
+name: Node.js Runtime Abuse
+slug: nodejs-runtime-abuse
+type: tradecraft
+status: active
+first_seen: 2023 (loader and C2 use in commodity and targeted campaigns)
+platforms:
+- Windows
+- Linux
+cves: []
+summary: 'Attackers use Node.js the way they once used PowerShell: a signed, trusted runtime that runs whatever
+  JavaScript it is handed. It appears at both ends of an intrusion. On servers, a web application''s own node process
+  becomes the foothold when an attacker gets code running in it (unsafe deserialisation, template injection, eval
+  / vm escapes, prototype pollution, command injection) and then shells out. On workstations, malware ships node.exe
+  and a .js payload into a user-writable folder and runs it from a script host or LNK, and the payload talks to
+  its operator directly from node - in some campaigns resolving the C2 address from a public blockchain so it never
+  appears in the code.
+
+  '
+threat_model: 'Behaviour-first and patch-agnostic. Every code-execution vector, known or zero-day, has to land in
+  the same place to do anything useful: node spawning a process, node running from somewhere it should not, or node
+  talking to somewhere a developer''s node would not. Those three are the minimum truths, so the coverage does not
+  depend on which bug or which loader got the attacker there. Allowlists (developer parents, npm shims, package
+  registries, GitHub) only lower a score, never exclude, because attackers stage payloads in the same places.
+
+  '
+attack_surface:
+- stage: Code execution in node
+  vector: Unsafe deserialisation (node-serialize), template injection (pug, ejs), eval / vm sandbox escape (vm2),
+    prototype pollution, command injection - any bug that runs attacker code in node
+  techniques:
+  - T1059.007
+  - T1190
+  minimum_truth: node spawns a child process
+  detections:
+  - nodejs_child_process_atomic
+  - nodejs_child_process_router
+- stage: Code execution in node
+  vector: Shell, LOLBin, downloader or encoded PowerShell launched by node (Windows wraps every exec() in cmd.exe
+    /d /s /c)
+  techniques:
+  - T1059.001
+  - T1059.004
+  - T1105
+  - T1218
+  minimum_truth: node spawns a shell or tool carrying attack primitives on its command line
+  detections:
+  - nodejs_child_process_router
+- stage: Code execution in node
+  vector: Python, Perl or PowerShell run with inline decoding (b64decode, FromBase64String, atob) from node
+  techniques:
+  - T1059.006
+  - T1027
+  minimum_truth: node spawns an interpreter with inline encoded code
+  detections:
+  - nodejs_child_process_router
+- stage: Loader execution
+  vector: node.exe and a .js payload dropped in AppData / Temp / Downloads and run by a script host, shell or LNK
+  techniques:
+  - T1059.007
+  - T1218
+  - T1204.002
+  minimum_truth: a Node.js runtime runs from, or runs a script from, a user-writable location
+  detections:
+  - nodejs_loader_execution
+- stage: Loader execution
+  vector: Renamed node.exe, or a pkg / nexe single-file bundle carrying the node runtime
+  techniques:
+  - T1036.003
+  - T1059.007
+  minimum_truth: a process whose PE metadata says node.exe / Node.js runs, or spawns children, under another name
+  detections:
+  - nodejs_loader_execution
+  - nodejs_child_process_atomic
+  - nodejs_child_process_router
+- stage: Staging
+  vector: node writes its next stage (exe, dll, ps1, cmd, hta, lnk) to a writable path or the Startup folder
+  techniques:
+  - T1105
+  - T1547.001
+  minimum_truth: a Node.js runtime writes an executable or script file type
+  detections:
+  - nodejs_file_dropper
+- stage: Persistence
+  vector: Run / RunOnce / Winlogon value or service ImagePath launching a script with node or a renamed runtime
+  techniques:
+  - T1547.001
+  - T1543.003
+  minimum_truth: an autostart value is set to launch a JavaScript file
+  detections:
+  - nodejs_persistence_autostart
+  cousins:
+  - name: Registry persistence - TaskCache and Service ImagePath (MTDF-Detection-Tests)
+    url: https://github.com/azdabat/MTDF-Detection-Tests/tree/main/detections/persistence/registry_service_taskcache_persistence
+- stage: Persistence
+  vector: Scheduled task created with node.exe plus a script as its action
+  techniques:
+  - T1053.005
+  minimum_truth: schtasks /create whose /tr runs node or a .js file
+  planned: Add node / .js to the script-engine list of Scheduled_Task_Abuse in MTDF-Detection-Tests
+  cousins:
+  - name: Scheduled Task Abuse (MTDF-Detection-Tests)
+    url: https://github.com/azdabat/MTDF-Detection-Tests/tree/main/detections/execution/scheduled_task_abuse
+- stage: Command and control
+  vector: C2 address resolved from a public blockchain (smart-contract read over a public RPC endpoint - EtherHiding
+    / EtherRAT pattern)
+  techniques:
+  - T1102
+  - T1071.001
+  minimum_truth: a Node.js runtime connects out to a public address
+  detections:
+  - nodejs_outbound_c2
+- stage: Command and control
+  vector: Direct-to-IP, non-web port or repeated polling from a node runtime in a writable path
+  techniques:
+  - T1071.001
+  - T1571
+  minimum_truth: a Node.js runtime connects out to a public address
+  detections:
+  - nodejs_outbound_c2
+  - https_beacon_shape
+- stage: Supply chain
+  vector: Malicious npm / yarn / pnpm preinstall or postinstall script reaching the network, decoding or using a
+    LOLBin
+  techniques:
+  - T1195.002
+  - T1059.007
+  minimum_truth: a package manager's node process starts a child with network, decode or LOLBin primitives
+  detections:
+  - npm_install_script_abuse
+  - nodejs_child_process_router
+- stage: Defense evasion
+  vector: Electron app (VS Code, Slack, Discord, Teams classic) run as node with a script file via ELECTRON_RUN_AS_NODE
+  techniques:
+  - T1218
+  - T1059.007
+  minimum_truth: an Electron app binary is launched with a JavaScript file argument outside its own resources
+  detections:
+  - electron_as_node_execution
+- stage: Defense evasion
+  vector: Electron app run as node with inline code (-e), so there is no script argument
+  techniques:
+  - T1218
+  - T1059.007
+  minimum_truth: an Electron app spawns a shell or LOLBin carrying attack primitives
+  planned: Electron_Child_Process_Abuse - the router's primitives applied to Electron apps as parents
+- stage: Defense evasion
+  vector: The ELECTRON_RUN_AS_NODE switch itself
+  techniques:
+  - T1218
+  minimum_truth: an environment variable on the launching process
+  boundary: Defender does not record environment variables; the launch shape (script argument) and the children
+    are what is visible
+- stage: Loader execution
+  vector: 'Linux: node run from /tmp, /dev/shm or a hidden home directory by a web server or cron'
+  techniques:
+  - T1059.007
+  - T1053.003
+  minimum_truth: a Node.js runtime runs a script from a world-writable path on Linux
+  planned: NodeJS_Linux_Loader - same minimum truth with Linux paths (the collector and router already cover Linux
+    children)
+variants:
+- id: V0
+  name: Baseline loader chain
+  capture: node_lab_v1
+  emulation: emulation/mtdf_node_lab.ps1
+  description: A copied node.exe in %TEMP% runs a script; it launches an IEX cradle, encoded PowerShell and certutil,
+    then polls a public Ethereum RPC endpoint 25 times
+- id: V1
+  name: Renamed runtime
+  capture: node_variants_v1
+  emulation: emulation/mtdf_node_variants.ps1
+  description: node.exe copied to Downloads as update.exe; its child is encoded PowerShell
+- id: V2
+  name: Non-web-port C2
+  capture: node_variants_v1
+  emulation: emulation/mtdf_node_variants.ps1
+  description: The renamed runtime opens 6 connections to port 4444 on a public test host
+- id: V3
+  name: Run-key persistence
+  capture: node_variants_v1
+  emulation: emulation/mtdf_node_variants.ps1
+  description: HKCU Run value MTDFUpdater launching update.exe payload.js
+- id: V4
+  name: Stage and Startup drop
+  capture: node_variants_v1
+  emulation: emulation/mtdf_node_variants.ps1
+  description: node writes a .cmd into the Startup folder and a .ps1 into %TEMP%
+- id: V5
+  name: npm postinstall
+  capture: node_variants_v1
+  emulation: emulation/mtdf_node_variants.ps1
+  description: npm install of a package whose postinstall script runs curl
+- id: V6
+  name: Electron run as node
+  capture: node_variants_v1
+  emulation: emulation/mtdf_node_variants.ps1
+  description: An Electron-named binary (Code.exe, a node stand-in) launched with a script from %TEMP%
+- id: B
+  name: Benign developer workflow
+  capture: node_benign_v1
+  emulation: emulation/mtdf_node_benign.ps1
+  description: 'npm install, an app fetching from registry.npmjs.org, npm run build with node -e, npx and a node
+    -e one-liner: every detection must stay silent'
+  benign: true
+references:
+- title: Microsoft Threat Intelligence (Apr 2025) - Threat actors misuse Node.js to deliver malware and other malicious
+    payloads
+  url: https://www.microsoft.com/en-us/security/blog/2025/04/15/threat-actors-misuse-node-js-to-deliver-malware-and-other-malicious-payloads/
+- title: Google Threat Intelligence - DPRK adopts EtherHiding (smart contracts as C2 / payload store)
+  url: https://cloud.google.com/blog/topics/threat-intelligence/dprk-adopts-etherhiding
+- title: Node.js child_process documentation (exec wraps commands in a shell)
+  url: https://nodejs.org/api/child_process.html
+- title: Original research - Node.js Child Process Abuse (MTDF)
+  url: https://github.com/azdabat/Novel-Tradecraft-Research-Emerging-Attack-Ecosystems/blob/main/Node.js%20Child%20Process%20Abuse.md

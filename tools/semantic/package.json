@@ -1,0 +1,8 @@
+{
+  "name": "mtdf-kql-semantic-check",
+  "private": true,
+  "description": "Microsoft's Kusto language service, used offline to compile-check every rule and test query",
+  "dependencies": {
+    "@kusto/language-service-next": "12.4.1"
+  }
+}
