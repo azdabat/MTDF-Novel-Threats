@@ -2,7 +2,7 @@
 
 **Type:** tradecraft · **Status:** active · **First seen:** 2023 (loader and C2 use in commodity and targeted campaigns) · **Platforms:** Windows, Linux
 
-> **Coverage:** 0 of 15 attack-surface rows validated against recorded telemetry · 11 have a detection · 9 detections · not yet run
+> **Coverage:** 0 of 15 attack-surface rows validated against recorded telemetry · 11 have a detection · 9 detections · last run 2026-11-16 18:41 UTC
 
 ## Summary
 
