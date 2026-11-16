@@ -10,16 +10,16 @@
  "techniques": [
   {
    "techniqueID": "T1027",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1036.003",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
@@ -38,79 +38,79 @@
   },
   {
    "techniqueID": "T1059.001",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1059.004",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1059.006",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1059.007",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1071.001",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1102",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1105",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1190",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1195.002",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1204.002",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
    "techniqueID": "T1218",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   },
   {
@@ -129,9 +129,9 @@
   },
   {
    "techniqueID": "T1571",
-   "score": 30,
+   "score": 50,
    "color": "#d29922",
-   "comment": "\ud83e\uddea Awaiting telemetry",
+   "comment": "\u23f3 Awaiting first run",
    "enabled": true
   }
  ],

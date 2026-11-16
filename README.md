@@ -11,7 +11,7 @@ Part of the **[Minimum Truth Detection Framework](https://github.com/azdabat/Min
 <!-- THREATS:START -->
 | Threat | Type | Status | Platforms | Matrix validated | Detections | Tests passing |
 |---|---|---|---|---|---|---|
-| [**Node.js Runtime Abuse**](threats/nodejs-runtime-abuse) | tradecraft | active | Windows, Linux | 0/15 | 9 | 0/0 |
+| [**Node.js Runtime Abuse**](threats/nodejs-runtime-abuse) | tradecraft | active | Windows, Linux | 0/15 | 9 | 0/5 |
 
 *Last test run: 2026-11-16 18:41 UTC*
 <!-- THREATS:END -->
