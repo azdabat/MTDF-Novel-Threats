@@ -2,7 +2,7 @@
 
 **Type:** tradecraft · **Status:** active · **First seen:** 2023 (loader and C2 use in commodity and targeted campaigns) · **Platforms:** Windows, Linux
 
-> **Coverage:** 8 of 15 attack-surface rows validated against recorded telemetry · 11 have a detection · 9 detections · last run 2026-11-16 18:46 UTC
+> **Coverage:** 8 of 15 attack-surface rows validated against recorded telemetry · 11 have a detection · 9 detections · last run 2026-11-24 11:01 UTC
 
 ## Summary
 
@@ -112,7 +112,7 @@ Each row is one way the threat can be carried out, reproduced on the lab VM; eac
 | **V4** Stage and Startup drop | node writes a .cmd into the Startup folder and a .ps1 into %TEMP% | `node_variants_v1` | [`mtdf_node_variants.ps1`](emulation/mtdf_node_variants.ps1) |
 | **V5** npm postinstall | npm install of a package whose postinstall script runs curl | `node_variants_v1` | [`mtdf_node_variants.ps1`](emulation/mtdf_node_variants.ps1) |
 | **V6** Electron run as node | An Electron-named binary (Code.exe, a node stand-in) launched with a script from %TEMP% | `node_variants_v1` | [`mtdf_node_variants.ps1`](emulation/mtdf_node_variants.ps1) |
-| **B** Benign developer workflow | npm install, an app fetching from registry.npmjs.org, npm run build with node -e, npx and a node -e one-liner: every detection must stay silent | `node_benign_v1` | [`mtdf_node_benign.ps1`](emulation/mtdf_node_benign.ps1) |
+| **B** Benign developer workflow | npm install, an app fetching from registry.npmjs.org, npm run build with node -e, npx, a node -e one-liner, a browser open through the open package and a git clone from github.com: every detection must stay silent | `node_benign_v1` | [`mtdf_node_benign.ps1`](emulation/mtdf_node_benign.ps1) |
 
 </details>
 
