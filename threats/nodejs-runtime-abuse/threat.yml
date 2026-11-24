@@ -200,8 +200,8 @@ variants:
   name: Benign developer workflow
   capture: node_benign_v1
   emulation: emulation/mtdf_node_benign.ps1
-  description: 'npm install, an app fetching from registry.npmjs.org, npm run build with node -e, npx and a node
-    -e one-liner: every detection must stay silent'
+  description: 'npm install, an app fetching from registry.npmjs.org, npm run build with node -e, npx, a node
+    -e one-liner, a browser open through the open package and a git clone from github.com: every detection must stay silent'
   benign: true
 references:
 - title: Microsoft Threat Intelligence (Apr 2025) - Threat actors misuse Node.js to deliver malware and other malicious

@@ -28,6 +28,15 @@ Writing down how an attacker would vary each stage (variants V1–V6) and what a
 
 Lesson kept for every threat: **write the benign workflow before the rules ship.** It costs minutes and finds the noise that would otherwise be found by a SOC.
 
+### A second benign review: what a developer's node launches every day
+
+Reading the router against two more everyday actions found two false positives before any capture existed:
+
+- **Opening the browser.** `npm start --open`, Vite and create-react-app use the `open` package, which on Windows starts `powershell -EncodedCommand` with `Start "http://localhost:3000"` encoded inside. To the router that was encoded PowerShell from node: 30, over the threshold, on every dev-server start.
+- **`git clone` from an npm script.** `cmd.exe` plus a URL scored 35.
+
+The fix keeps the framework's rule: score down, never exclude, and only for the benign *shape*. The router now decodes `-EncodedCommand` and inspects the decoded text alongside the command line, so a browser open to a loopback address with nothing else in it cancels its own encoded and URL points, while an encoded cradle is now scored as a cradle rather than only as "encoded" (FIX-11). A `git` / `npm` fetch whose every URL is a known code host cancels the URL points; `raw.githubusercontent.com` is deliberately not on that list. Any cradle, LOLBin, pipe or chained command anywhere cancels the discount. Both actions are now steps B6 and B7 of the benign emulation, so the benign capture proves the fix instead of this note claiming it.
+
 ## 4. Closing gaps with the Cousin Pack
 
 Each variant the core sensors could not see got its own sensor with its own minimum truth, in one telemetry domain:

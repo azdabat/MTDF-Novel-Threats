@@ -6,6 +6,10 @@
 param([string]$Message = "Update threats", [switch]$Promote)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+# docs/results.json is written by every local run and by CI: discard the local copy so it never blocks the sync
+if (Test-Path docs\results.json) {
+    if (git ls-files docs/results.json) { git checkout -- docs/results.json } else { Remove-Item docs\results.json }
+}
 git pull --rebase --autostash
 if ($LASTEXITCODE -ne 0) { Write-Host "git pull failed - resolve it, then run again." -ForegroundColor Red; exit 1 }
 if ($Promote) { python tools\promote.py --apply; if ($LASTEXITCODE -ne 0) { exit 1 } }

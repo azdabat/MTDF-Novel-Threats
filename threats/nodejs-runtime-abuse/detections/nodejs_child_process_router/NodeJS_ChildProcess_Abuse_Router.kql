@@ -47,6 +47,19 @@
 //   [FIX-9] HIGH   Benign-workflow review: node's own -e (evaluate) flag matched the PowerShell
 //                  -e (encoded) pattern, so `npm run build` with "node -e ..." scored 30 and fired.
 //                  -e now counts as encoded only when PowerShell is on the command line.
+//   [FIX-10] HIGH  Benign-workflow review (2): two everyday developer actions scored over the
+//                  threshold. The `open` package (npm start --open, Vite, CRA) opens the browser
+//                  with powershell -EncodedCommand of 'Start "http://localhost:3000"' (encoded 20 +
+//                  wrapper 10 = 30), and an npm script running `git clone https://github.com/...`
+//                  scored wrapper 10 + URL 25 = 35. Both now score down, never excluded, and only
+//                  when the action is the benign shape: a loopback browser open, or a VCS /
+//                  package-manager fetch from a known code host, with no cradle, LOLBin, pipe or
+//                  decoded-payload primitive anywhere on the command line.
+//   [FIX-11] HIGH  -EncodedCommand is decoded (UTF-16LE base64) and every primitive is checked
+//                  on the command line AND the decoded text, so an encoded cradle is scored as a
+//                  cradle rather than only as "encoded". Output carries DecodedCommand.
+//   [FIX-12] LOW   Pipe-to-shell matched only "| bash" with a space; "|bash" slipped through.
+//                  Now a regex, any spacing.
 //   [PORT]         toint(<bool>) written as iff(<bool>, 1, 0): identical results, and it also
 //                  runs on the local ADX emulator.
 // ============================================================================
@@ -62,9 +75,14 @@ let ManagedParents = dynamic([
     "ccmexec.exe","intunemanagementextension.exe","taniumclient.exe"
 ]);
 let ReverseShellTokens = dynamic(["/dev/tcp/","exec 5<>","socket.socket("]);
-let PipeToShellTokens  = dynamic(["| bash","| sh","| dash","| zsh","| perl","| python"]);
 let DownloadTokens     = dynamic(["curl","wget","ncat","socat","Invoke-WebRequest","iwr","Start-BitsTransfer"]);   // [FIX-4]
 let LOLBinTokens       = dynamic(["certutil","bitsadmin","mshta","wscript","cscript","regsvr32"]);               // [FIX-4]
+let CradleTokens       = dynamic(["IEX","Invoke-Expression","DownloadString","DownloadFile","Invoke-WebRequest","iwr",
+                                  "Invoke-RestMethod","irm","Net.WebClient","Start-BitsTransfer","FromBase64String"]);   // [FIX-10]
+// [FIX-10] Known code hosts: a VCS / package-manager fetch from these scores down. raw.githubusercontent.com,
+//          gist and paste sites are deliberately NOT here - they are payload hosts as often as code hosts.
+let DevHosts = dynamic(["github.com","codeload.github.com","gitlab.com","bitbucket.org","dev.azure.com",
+                        "registry.npmjs.org","registry.yarnpkg.com","registry.npmmirror.com","nodejs.org"]);
 
 DeviceProcessEvents
 | where Timestamp > ago(lookback)
@@ -76,15 +94,19 @@ DeviceProcessEvents
      or FileName in~ (InterpreterGrp)
      or FileName in~ (WindowsCradle)
      or FileName in~ (WindowsLOLBins)
+// [FIX-11] Decode PowerShell -EncodedCommand (UTF-16LE base64) and inspect it with the command line.
+| extend EncBlob = extract(@"(?i)\s-e(?:c|n|nc|nco|ncod|ncode|ncoded|ncodedc|ncodedco|ncodedcom|ncodedcomm|ncodedcomma|ncodedcomman|ncodedcommand)?\s+([A-Za-z0-9+/=]{8,})", 1, ProcessCommandLine)
+| extend DecodedCommand = iff(isnotempty(EncBlob), replace_regex(tostring(base64_decode_tostring(EncBlob)), @"\x00", ""), "")
+| extend Inspect = strcat(ProcessCommandLine, " ", DecodedCommand)
 | extend
     IsShell       = iff(FileName in~ (ShellGroup), 1, 0),
-    IsDownloader  = iff(FileName in~ (DownloadGroup) or ProcessCommandLine has_any (DownloadTokens), 1, 0),   // [FIX-4]
+    IsDownloader  = iff(FileName in~ (DownloadGroup) or Inspect has_any (DownloadTokens), 1, 0),   // [FIX-4]
     IsInterpreter = iff(FileName in~ (InterpreterGrp), 1, 0),
     IsWinCradle   = iff(FileName in~ (WindowsCradle), 1, 0),
-    IsWinLOLBin   = iff(FileName in~ (WindowsLOLBins) or ProcessCommandLine has_any (LOLBinTokens), 1, 0),  // [FIX-4]
-    HasReverseShell  = iff(ProcessCommandLine has_any (ReverseShellTokens), 1, 0),
-    HasPipeToShell   = iff(ProcessCommandLine has_any (PipeToShellTokens), 1, 0),
-    HasRemoteURL     = iff(ProcessCommandLine matches regex
+    IsWinLOLBin   = iff(FileName in~ (WindowsLOLBins) or Inspect has_any (LOLBinTokens), 1, 0),  // [FIX-4]
+    HasReverseShell  = iff(Inspect has_any (ReverseShellTokens), 1, 0),
+    HasPipeToShell   = iff(Inspect matches regex @"\|\s*(bash|sh|dash|zsh|perl|python[0-9]?)\b", 1, 0),   // [FIX-12]
+    HasRemoteURL     = iff(Inspect matches regex
                          @"\b(https?|ftp)://[^\s]+", 1, 0),
     HasBase64        = iff((ProcessCommandLine has_any ("powershell", "pwsh")                                  // [FIX-9] -e is only
                             and ProcessCommandLine matches regex @"(?i)\s-e(c|n|nc|nco|ncod|ncode|ncoded|ncodedc|ncodedco|ncodedcom|ncodedcomm|ncodedcomma|ncodedcomman|ncodedcommand)?\s")  // "encoded" for PowerShell
@@ -93,7 +115,21 @@ DeviceProcessEvents
 | extend                                                                                          // [FIX-2]
     HasWinCradleCmd  = iff(IsWinCradle == 1
                          and ProcessCommandLine has_any (
-                             "IEX","DownloadString","Invoke-WebRequest"), 1, 0)
+                             "IEX","DownloadString","Invoke-WebRequest")
+                         or IsWinCradle == 1 and DecodedCommand has_any (CradleTokens), 1, 0)   // [FIX-11]
+// [FIX-10] Benign shapes. Each requires that NO attack primitive is present anywhere.
+| extend
+    UrlHosts     = extract_all(@"(?i)\b(?:https?|ftp)://([^/\s:'""]+)", tolower(Inspect)),
+    HasPrimitive = iff(Inspect has_any (CradleTokens) or Inspect has_any (LOLBinTokens)
+                       or HasPipeToShell == 1 or HasReverseShell == 1
+                       or (isnotempty(DecodedCommand) and DecodedCommand has_any ("&&", ";", "|")), 1, 0)
+| extend
+    IsLoopbackBrowserOpen = iff(HasPrimitive == 0
+                       and Inspect matches regex @"(?i)\bstart\b[^;|&]*\bhttps?://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?", 1, 0),
+    IsDevFetch   = iff(HasPrimitive == 0
+                       and Inspect matches regex @"(?i)\b(git|npm|npx|yarn|pnpm)(\.exe|\.cmd)?\s"
+                       and array_length(UrlHosts) > 0
+                       and array_length(set_difference(UrlHosts, DevHosts)) == 0, 1, 0)
 | extend RawScore = 0
     + iff(HasReverseShell == 1,   40, 0)
     + iff(HasPipeToShell == 1,    30, 0)
@@ -106,6 +142,8 @@ DeviceProcessEvents
     + iff(IsInterpreter == 1,     10, 0)   // [FIX-5]
     + iff(IsWinLOLBin == 1,       10, 0)   // [FIX-5]
     - iff(IsManagedParent == 1,   15, 0)
+    - iff(IsLoopbackBrowserOpen == 1, 45, 0)   // [FIX-10] cancels encoded + URL for the benign shape only
+    - iff(IsDevFetch == 1,        25, 0)       // [FIX-10] cancels the URL for a code-host fetch
 | extend RiskScore = iif(RawScore < 0, 0, RawScore)
 | where RiskScore >= 30
 | extend RoutingDirective = case(
@@ -134,6 +172,7 @@ DeviceProcessEvents
     ParentProcess = InitiatingProcessFileName,
     ChildProcess  = FileName,
     ProcessCommandLine,
+    DecodedCommand,
     RiskScore,
     IsShell, IsDownloader, IsInterpreter, IsWinCradle,
     HasReverseShell, HasPipeToShell, HasRemoteURL, HasBase64,

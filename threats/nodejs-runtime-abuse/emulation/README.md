@@ -6,7 +6,7 @@ Three harmless, behaviour-only emulations for the lab VM. Together they test eve
 |---|---|---|---|---|
 | [`mtdf_node_lab.ps1`](mtdf_node_lab.ps1) | `node_lab_v1` | V0 | fire on the main loader → children → C2 chain | ~9 min |
 | [`mtdf_node_variants.ps1`](mtdf_node_variants.ps1) | `node_variants_v1` | V1–V6 | catch renamed runtimes, non-web C2, persistence, staging, npm postinstall, Electron | ~3 min |
-| [`mtdf_node_benign.ps1`](mtdf_node_benign.ps1) | `node_benign_v1` | B | stay **silent** on npm install, npm run, npx, node -e and an app talking to the registry | ~2 min |
+| [`mtdf_node_benign.ps1`](mtdf_node_benign.ps1) | `node_benign_v1` | B | stay **silent** on npm install, npm run, npx, node -e, a browser open, a git clone and an app talking to the registry | ~2 min |
 
 Each writes its capture next to itself and ends with a check that every variant actually ran and was logged.
 
@@ -47,7 +47,7 @@ It takes about 9 minutes and writes `node_lab_capture.json` next to the script. 
 | V4 | `mtdf_test.cmd` in the Startup folder, `mtdf-variant-stage.ps1` in %TEMP% | Contents are `exit /b 0` and `Write-Output`; both removed |
 | V5 | `npm install` of a local package whose postinstall runs `curl http://127.0.0.1:9/stage.sh` | Nothing listens on 127.0.0.1:9 |
 | V6 | node.exe copied as `%TEMP%\mtdf-electron\Code.exe` runs `main.js` (`whoami`) | A stand-in for a real Electron app: same name, same launch shape |
-| B | npm install `ms`, app fetches its metadata from registry.npmjs.org, `npm run build` (`node -e`), `npx cowsay`, `node -e` | Normal developer activity |
+| B | npm install `ms`, app fetches its metadata from registry.npmjs.org, `npm run build` (`node -e`), `npx cowsay`, `node -e`, `npx open-cli http://localhost:3000` (browser open, as `npm start --open` does), `npm run fetch` (`git clone` from github.com) | Normal developer activity; the browser opens a dead localhost tab |
 
 ## Register the captures
 

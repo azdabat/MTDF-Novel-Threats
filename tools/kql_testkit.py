@@ -247,23 +247,7 @@ def run_rule(rule_text, fixtures, cluster="http://localhost:8080", db="NetDefaul
 _CAST = {"string": "tostring", "datetime": "todatetime", "int": "toint", "long": "tolong",
          "bool": "tobool", "real": "toreal", "dynamic": "todynamic", "timespan": "totimespan",
          "guid": "toguid", "decimal": "todecimal"}
-_TYPEDREPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def content_root():
-    """Where the detections live: threats/ (novel-threat repo) or detections/ (tactic repo)."""
-    return "threats" if os.path.isdir(os.path.join(REPO_ROOT, "threats")) else "detections"
-
-
-def detection_dirs():
-    """Every folder holding a detection.yml under the content root (templates excluded)."""
-    import glob
-    base = os.path.join(REPO_ROOT, content_root())
-    return sorted(os.path.dirname(p) for p in glob.glob(os.path.join(base, "**", "detection.yml"), recursive=True)
-                  if "_template" not in p.replace("\\", "/").split("/"))
-
-
-_NULL = {"string": '""', "datetime": "datetime(null)", "int": "int(null)", "long": "long(null)",
+_TYPED_NULL = {"string": '""', "datetime": "datetime(null)", "int": "int(null)", "long": "long(null)",
                "bool": "bool(null)", "real": "real(null)", "dynamic": "dynamic(null)",
                "timespan": "timespan(null)", "guid": "guid(null)", "decimal": "decimal(null)"}
 
