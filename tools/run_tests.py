@@ -35,6 +35,7 @@ import yaml
 import kql_testkit as tk
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEPLOY_COLUMNS = ("Timestamp", "DeviceId", "ReportId")   # required by Defender custom detections
 
 
 def resolve(case_file, rel):
@@ -144,6 +145,10 @@ def main():
         try:
             rows, meta = tk.run_rule(rule_text, fixtures, cluster=args.cluster, db=args.db)
             fails = tk.evaluate(rows, case.get("expect", {}))
+            # Deployability: a Defender custom detection rejects a query whose output lacks these
+            missing = [c for c in DEPLOY_COLUMNS if rows and c not in rows[0]]
+            if missing:
+                fails.append(f"output lacks {', '.join(missing)}: cannot deploy as a Defender custom detection")
             status = "fail" if fails else "pass"
         except Exception as e:
             msg = str(e)
